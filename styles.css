@@ -998,6 +998,48 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 .toast.err { background: var(--danger); }
 
+/* ---------------- автоперевод ---------------- */
+
+.tr-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: -4px 0 14px;
+  padding: 7px 11px;
+  border: 1px solid var(--blue-100);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, .72);
+}
+.switch { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; user-select: none; }
+.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.switch-track {
+  position: relative;
+  width: 32px;
+  height: 18px;
+  border-radius: 99px;
+  background: #cfdced;
+  transition: background .15s;
+  flex: 0 0 auto;
+}
+.switch-track::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(13, 52, 89, .25);
+  transition: transform .15s;
+}
+.switch input:checked + .switch-track { background: var(--blue-500); }
+.switch input:checked + .switch-track::after { transform: translateX(14px); }
+.switch input:focus-visible + .switch-track { box-shadow: 0 0 0 3px rgba(47, 140, 230, .25); }
+.switch-text { font-size: 11.5px; font-weight: 650; color: var(--ink-2); }
+.tr-hint { color: var(--muted); font-size: 11px; margin-right: auto; }
+
 /* ---------------- split RU + EN ---------------- */
 
 .editor.split-mode { max-width: 1780px; }

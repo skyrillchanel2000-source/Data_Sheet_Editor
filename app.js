@@ -11,6 +11,8 @@
   const uid = (p) => p + Math.random().toString(36).slice(2, 8);
   const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
 
+  const translateRu = (text) => window.DSTranslate.translate(text);
+
   const DEFAULT_ROWS = [
     ["Тип", "Type"],
     ["Производитель", "Manufacturer"],
@@ -37,6 +39,25 @@
   function saveLang(lang) {
     try { localStorage.setItem(LANG_STORE, lang); } catch (err) { /* не критично */ }
   }
+
+  const AUTO_STORE = "ds-editor-auto";
+  const SYNC_STORE = "ds-editor-sync";
+
+  function readFlag(key, fallback) {
+    try {
+      const saved = localStorage.getItem(key);
+      return saved == null ? fallback : saved === "1";
+    } catch (err) {
+      return fallback;
+    }
+  }
+
+  function writeFlag(key, value) {
+    try { localStorage.setItem(key, value ? "1" : "0"); } catch (err) { /* не критично */ }
+  }
+
+  let autoOn = readFlag(AUTO_STORE, true);
+  let syncOn = readFlag(SYNC_STORE, true);
 
   let state;
   let ui = { projectId: null, deviceId: null, kitId: null, lang: readLang(), search: "", rowId: null, cellId: null, col: 0, refEdit: false };
@@ -855,8 +876,33 @@
       </div>
       ${refBarHTML()}
       ${kitBar(d)}
+      ${translateBarHTML()}
       ${bodyHTML(item, d, lang, isKit)}
     `;
+  }
+
+  function translateHint() {
+    if (!autoOn && !syncOn) return "Перевод только по кнопке";
+    if (autoOn && syncOn) return "EN заполняется переводом RU";
+    if (autoOn) return "Автоперевод включён, синхронизация выключена — EN обновляется кнопкой";
+    return "Синхронизация без перевода: EN получает текст RU";
+  }
+
+  function translateBarHTML() {
+    return `<div class="tr-bar">
+      <label class="switch" title="Автоматически переводить русский текст в английский по словарю">
+        <input type="checkbox" id="opt-auto"${autoOn ? " checked" : ""}>
+        <span class="switch-track" aria-hidden="true"></span>
+        <span class="switch-text">Автоперевод</span>
+      </label>
+      <label class="switch" title="Переносить изменения русского текста в английский">
+        <input type="checkbox" id="opt-sync"${syncOn ? " checked" : ""}>
+        <span class="switch-track" aria-hidden="true"></span>
+        <span class="switch-text">Синхронизация</span>
+      </label>
+      <span class="tr-hint" id="tr-hint">${esc(translateHint())}</span>
+      <button class="btn btn-sm btn-soft" data-act="translate-page" title="Перевести русский текст листа в английский по словарю">Перевести страницу</button>
+    </div>`;
   }
 
   function bodyHTML(item, d, lang, isKit) {
@@ -1159,7 +1205,7 @@
     "dup-sheet", "del-sheet", "add-kit", "del-kit", "row-cols", "merge-at",
     "add-row", "del-row", "row-up", "row-down",
     "add-fig", "del-fig", "pick-image", "add-mark", "del-mark", "add-group", "del-group",
-    "add-tag", "del-tag", "paste-tags"
+    "add-tag", "del-tag", "paste-tags", "translate-page"
   ]);
 
   const REF_FREE_ACTS = new Set(["to-ref", "toggle-ref-edit", "forget-ref-key", "lang", "kit"]);
@@ -1199,6 +1245,7 @@
     if (key === "no") d.no = Math.max(1, Math.round(num(value, d.no)));
     else if (key === "suffix") d.suffix = value.trim();
     else d[key] = value;
+    if (EN_FIELD[key]) syncMetaField(d, key, value);
     touch();
     if (key.startsWith("title") || key === "no" || key === "suffix") {
       renderSidebar();
@@ -1206,6 +1253,32 @@
       if (crumb) crumb.textContent = `Лист №${numberOf(d)}`;
       $$('[data-num="device"]', $("#editor")).forEach((badge) => { badge.textContent = `№${numberOf(d)}`; });
     }
+  }
+
+  const EN_FIELD = { titleRu: "titleEn", scopeRu: "scopeEn", introRu: "introEn", nameRu: "nameEn" };
+
+  function toEnglish(value) {
+    return autoOn ? translateRu(value).text : value;
+  }
+
+  function syncMetaField(d, key, value) {
+    if (!syncOn) return;
+    const dst = EN_FIELD[key];
+    if (!dst) return;
+    const text = toEnglish(value);
+    if (d[dst] === text) return;
+    d[dst] = text;
+    const input = $(`[data-model="${dst}"]`, $("#editor"));
+    if (input && document.activeElement !== input) input.value = text;
+  }
+
+  function syncTableText(kind, id, text) {
+    const root = $('.split-col[data-panel="en"]', $("#editor"));
+    if (!root) return;
+    const el = kind === "label"
+      ? $(`.td.label[data-r="${id}"]`, root)
+      : $(`.vcell[data-c="${id}"]`, root);
+    if (el && document.activeElement !== el) el.textContent = text;
   }
 
   function applyEditable(el) {
@@ -1218,11 +1291,68 @@
     const value = el.innerText.replace(/\u00a0/g, " ").replace(/\n$/, "");
     if (el.dataset.edit === "label") {
       row[ru ? "labelRu" : "labelEn"] = value;
+      if (ru && syncOn) {
+        row.labelEn = toEnglish(value);
+        syncTableText("label", row.id, row.labelEn);
+      }
     } else {
       const cell = row.cells.find((c) => c.id === el.dataset.c);
-      if (cell) cell[ru ? "ru" : "en"] = value;
+      if (cell) {
+        cell[ru ? "ru" : "en"] = value;
+        if (ru && syncOn) {
+          cell.en = toEnglish(value);
+          syncTableText("cell", cell.id, cell.en);
+        }
+      }
     }
     touch();
+  }
+
+  /* ---------------- перевод страницы ---------------- */
+
+  function translateList(d) {
+    const jobs = [];
+    const add = (ru, get, set) => { jobs.push({ ru, get, set }); };
+    add(d.titleRu, () => d.titleEn, (v) => { d.titleEn = v; });
+    add(d.scopeRu, () => d.scopeEn, (v) => { d.scopeEn = v; });
+    add(d.introRu, () => d.introEn, (v) => { d.introEn = v; });
+    add(d.nameRu, () => d.nameEn, (v) => { d.nameEn = v; });
+    (d.rows || []).forEach((row) => {
+      add(row.labelRu, () => row.labelEn, (v) => { row.labelEn = v; });
+      (row.cells || []).forEach((cell) => add(cell.ru, () => cell.en, (v) => { cell.en = v; }));
+    });
+    (d.figures || []).forEach((fig) => {
+      add(fig.captionRu, () => fig.captionEn, (v) => { fig.captionEn = v; });
+      add(fig.noteRu, () => fig.noteEn, (v) => { fig.noteEn = v; });
+    });
+    (d.tagGroups || []).forEach((group) => add(group.scopeRu, () => group.scopeEn, (v) => { group.scopeEn = v; }));
+    return jobs.filter((job) => String(job.ru || "").trim());
+  }
+
+  async function translatePage() {
+    const d = sheet();
+    if (!d) return;
+    const jobs = translateList(d);
+    if (!jobs.length) { toast("На русской стороне нет текста для перевода", true); return; }
+    const results = jobs.map((job) => ({ ...job, translated: translateRu(job.ru) }));
+    const changed = results.filter((r) => r.translated.text.trim() && r.translated.text.trim() !== String(r.ru).trim()).length;
+    const missing = results.reduce((n, r) => n + r.translated.missing, 0);
+    const overwrite = results.filter((r) => {
+      const current = String(r.get() || "").trim();
+      return current && current !== r.translated.text.trim();
+    }).length;
+    if (overwrite) {
+      const ok = await askConfirm({
+        title: "Перевести страницу",
+        text: `Английский текст будет заменён переводом (в ${overwrite} полях он отличается от словарного). Продолжить?`,
+        ok: "Перевести и заменить"
+      });
+      if (!ok) return;
+    }
+    results.forEach((r) => r.set(r.translated.text));
+    touch();
+    render();
+    toast(`Переведено: ${changed} полей${missing ? `, без перевода слов — ${missing}` : ""}`);
   }
 
   function focusFrom(el) {
@@ -1877,6 +2007,7 @@
       if (act === "project-del") { deleteProject(); return; }
       if (act === "project-rename") { renameProject(); return; }
       if (act === "ref-open") { openRef(); return; }
+      if (act === "translate-page") { translatePage(); return; }
       if (act === "kit") { ui.kitId = el.dataset.id || null; ui.rowId = null; ui.cellId = null; render(); return; }
       if (act === "add-kit") { addKit(); return; }
       if (act === "del-kit") { delKit(); return; }
@@ -1937,6 +2068,23 @@
       if (tab) { e.preventDefault(); renameProject(); }
     });
 
+    document.addEventListener("change", (e) => {
+      const el = e.target;
+      if (el.id === "opt-auto") {
+        autoOn = el.checked;
+        writeFlag(AUTO_STORE, autoOn);
+        const hint = $("#tr-hint");
+        if (hint) hint.textContent = translateHint();
+        return;
+      }
+      if (el.id === "opt-sync") {
+        syncOn = el.checked;
+        writeFlag(SYNC_STORE, syncOn);
+        const hint = $("#tr-hint");
+        if (hint) hint.textContent = translateHint();
+      }
+    });
+
     document.addEventListener("input", (e) => {
       const el = e.target;
       if (refLocked() && el.closest("#editor")) return;
@@ -1957,7 +2105,17 @@
       if (el.matches("[data-fig]")) {
         const d = sheet();
         const f = d.figures.find((x) => x.id === el.dataset.fig);
-        if (f) { f[el.dataset.field] = el.value; touch(); }
+        if (f) {
+          const field = el.dataset.field;
+          f[field] = el.value;
+          const dst = { captionRu: "captionEn", noteRu: "noteEn" }[field];
+          if (dst && syncOn) {
+            f[dst] = toEnglish(el.value);
+            const twin = $(`[data-fig="${f.id}"][data-field="${dst}"]`, $("#editor"));
+            if (twin && document.activeElement !== twin) twin.value = f[dst];
+          }
+          touch();
+        }
         return;
       }
       if (el.matches("[data-group]")) {
@@ -1965,7 +2123,17 @@
         const g = d.tagGroups.find((x) => x.id === el.dataset.group);
         if (!g) return;
         if (el.dataset.tag != null) { g.tags[Number(el.dataset.tag)] = el.value; touch(); }
-        else if (el.dataset.field) { g[el.dataset.field] = el.value; touch(); }
+        else if (el.dataset.field) {
+          const field = el.dataset.field;
+          g[field] = el.value;
+          const dst = { scopeRu: "scopeEn" }[field];
+          if (dst && syncOn) {
+            g[dst] = toEnglish(el.value);
+            const twin = $(`[data-group="${g.id}"][data-field="${dst}"]`, $("#editor"));
+            if (twin && document.activeElement !== twin) twin.value = g[dst];
+          }
+          touch();
+        }
       }
     });
 
