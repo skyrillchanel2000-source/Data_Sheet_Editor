@@ -60,6 +60,7 @@
   let syncOn = readFlag(SYNC_STORE, true);
 
   let state;
+  let stateAt = 0;
   let ui = { projectId: null, deviceId: null, kitId: null, lang: readLang(), search: "", rowId: null, cellId: null, col: 0, refEdit: false };
   let saveTimer = 0;
   let toastTimer = 0;
@@ -341,6 +342,7 @@
     if (storedAt && storedAt <= readLocalAt()) return;
     if (!storedAt && readLocal()) return;
     state = stored;
+    if (storedAt) stateAt = storedAt;
     if (!state.projects.some((p) => p.id === state.active)) state.active = state.projects[0].id;
     ui.deviceId = project()?.devices[0]?.id || null;
     ui.kitId = null;
@@ -361,6 +363,7 @@
     clearTimeout(saveTimer);
     const snapshot = state;
     const at = Date.now();
+    stateAt = at;
     let localOk = false;
     try {
       localStorage.setItem(STORE, JSON.stringify(snapshot));
@@ -2068,8 +2071,20 @@
     return failed;
   }
 
+  async function staleTabGuard() {
+    let storedAt = 0;
+    try { storedAt = Number(localStorage.getItem(STORE_AT) || 0); } catch (err) { return true; }
+    if (!storedAt || storedAt <= stateAt + 1500) return true;
+    return askConfirm({
+      title: "В другом окне данные новее",
+      text: "Похоже, листы правили в другой вкладке браузера позже, чем в этом окне. Здесь выгрузится старая копия — нажмите «Отмена» и обновите страницу (F5), если правки делали там.",
+      ok: "Выгрузить эту копию"
+    });
+  }
+
   async function exportBook() {
     try {
+      if (!(await staleTabGuard())) return;
       const snapshot = clone(state);
       const failed = await resolveFigureImages(snapshot);
       const result = window.DSXlsx.build(snapshot, { measure: textLines });
@@ -2404,6 +2419,7 @@
     const local = normalizeState(readLocal());
     storageMode = local ? "local" : "none";
     state = local || ensureReference(seedState());
+    try { stateAt = Number(localStorage.getItem(STORE_AT) || 0) || Date.now(); } catch (err) { stateAt = Date.now(); }
     if (!state.projects.some((p) => p.id === state.active)) state.active = state.projects[0]?.id;
     ui.projectId = state.active;
     ui.deviceId = project()?.devices[0]?.id || null;
