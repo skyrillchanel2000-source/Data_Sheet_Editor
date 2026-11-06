@@ -470,7 +470,6 @@
 
   /* ---------------- tags page ---------------- */
 
-  const TAG_COLS_MAX = 4;
   const TAG_LAST_COL = 22;
 
   function tagsPage(doc, device) {
@@ -502,26 +501,39 @@
       row += 3;
     };
 
-    /* Теги идут сверху вниз, затем в следующую колонку: на одной странице
-       столько колонок, сколько нужно, чтобы блок уместился по высоте. */
+    /* Теги идут сверху вниз, затем в следующую колонку. Номер один — в первой
+       колонке; вместо переноса на новую страницу сначала добавляются колонки:
+       4 строки, колонок столько, сколько нужно (не больше 16). */
     const drawGrid = (tags, start, height) => {
       const left = tags.length - start;
-      const k = Math.min(TAG_COLS_MAX, Math.max(1, Math.ceil(left / Math.max(1, height))));
-      const rows = Math.min(Math.max(1, height), Math.ceil(left / k));
+      const blank = !tags.some(Boolean);
+      const maxCols = TAG_LAST_COL - COLS.F;
+      let rows;
+      let cols;
+      if (blank) {
+        rows = Math.min(left, Math.max(1, height));
+        cols = 1;
+      } else {
+        rows = Math.min(4, left);
+        cols = Math.ceil(left / rows);
+        if (cols > maxCols) { cols = maxCols; rows = Math.ceil(left / cols); }
+        if (rows > height) {
+          rows = Math.max(1, height);
+          cols = Math.min(maxCols, Math.ceil(left / rows));
+        }
+      }
       const bounds = [];
-      for (let j = 0; j <= k; j += 1) bounds.push(COLS.F + Math.round(j * (TAG_LAST_COL - COLS.F + 1) / k));
+      for (let j = 0; j <= cols; j += 1) bounds.push(COLS.F + 1 + Math.round(j * maxCols / cols));
       for (let i = 0; i < rows; i += 1) {
-        for (let j = 0; j < k; j += 1) {
+        doc.cell(row, COLS.F, String(i + 1), S.thinCenter);
+        for (let j = 0; j < cols; j += 1) {
           const idx = start + j * rows + i;
-          const numCol = bounds[j];
-          const from = numCol + 1;
-          const to = Math.max(from, bounds[j + 1] - 1);
-          doc.cell(row, numCol, idx < tags.length ? String(idx + 1) : "", S.thinCenter);
-          doc.merge(row, from, row, to, idx < tags.length ? (tags[idx] || "") : "", S.thinCenter);
+          const to = Math.max(bounds[j], bounds[j + 1] - 1);
+          doc.merge(row, bounds[j], row, to, idx < tags.length ? (tags[idx] || "") : "", S.thinCenter);
         }
         row += 1;
       }
-      return start + k * rows;
+      return start + rows * cols;
     };
 
     if (!count) { doc.protectFrame(top); return; }
