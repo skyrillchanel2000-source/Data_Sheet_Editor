@@ -2,6 +2,7 @@
   "use strict";
 
   const STORE = "ds-editor-v1";
+  const STORE_AT = "ds-editor-v1-at";
   const REF_PROJECT_ID = "p-all";
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -191,6 +192,8 @@
   const DB_NAME = "ds-editor";
   const DB_STORE = "state";
   const DB_KEY = "current";
+  const DB_KEY_AT = "current-at";
+  const DB_KEY_FILE = "file-handle";
 
   let dbPromise = null;
   let storageMode = "unknown";
@@ -222,19 +225,31 @@
     ]);
   }
 
-  function idbGet() {
+  function idbGet(key = DB_KEY) {
     return db().then((database) => new Promise((resolve, reject) => {
       const tx = database.transaction(DB_STORE, "readonly");
-      const req = tx.objectStore(DB_STORE).get(DB_KEY);
-      req.onsuccess = () => resolve(req.result || null);
+      const req = tx.objectStore(DB_STORE).get(key);
+      req.onsuccess = () => resolve(req.result === undefined ? null : req.result);
       req.onerror = () => reject(req.error || new Error("IndexedDB: чтение не удалось"));
     }));
   }
 
-  function idbPut(value) {
+  function idbPut(value, key = DB_KEY) {
     return db().then((database) => new Promise((resolve, reject) => {
       const tx = database.transaction(DB_STORE, "readwrite");
-      tx.objectStore(DB_STORE).put(value, DB_KEY);
+      tx.objectStore(DB_STORE).put(value, key);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => reject(tx.error || new Error("IndexedDB: запись не удалась"));
+      tx.onabort = () => reject(tx.error || new Error("IndexedDB: запись прервана"));
+    }));
+  }
+
+  function idbSave(snapshot, at) {
+    return db().then((database) => new Promise((resolve, reject) => {
+      const tx = database.transaction(DB_STORE, "readwrite");
+      const store = tx.objectStore(DB_STORE);
+      store.put(snapshot, DB_KEY);
+      store.put(at, DB_KEY_AT);
       tx.oncomplete = () => resolve(true);
       tx.onerror = () => reject(tx.error || new Error("IndexedDB: запись не удалась"));
       tx.onabort = () => reject(tx.error || new Error("IndexedDB: запись прервана"));
@@ -250,6 +265,10 @@
     }
   }
 
+  function readLocalAt() {
+    try { return Number(localStorage.getItem(STORE_AT)) || 0; } catch (err) { return 0; }
+  }
+
   async function loadState() {
     try {
       const stored = normalizeState(await withTimeout(idbGet(), 2000));
@@ -263,14 +282,27 @@
     return ensureReference(seedState());
   }
 
-  async function hydrateFromIdb() {
+  let bootDirty = false;
+
+  async function idbLoad() {
+    const [snapshot, at] = await withTimeout(Promise.all([idbGet(), idbGet(DB_KEY_AT)]), 2500);
+    return { snapshot, at: Number(at) || 0 };
+  }
+
+  async function syncFromIdb() {
     let stored = null;
+    let storedAt = 0;
     try {
-      stored = normalizeState(await withTimeout(idbGet(), 2500));
+      const res = await idbLoad();
+      stored = normalizeState(res.snapshot);
+      storedAt = res.at;
     } catch (err) {
       return;
     }
     if (!stored) return;
+    if (bootDirty) return;
+    if (storedAt && storedAt <= readLocalAt()) return;
+    if (!storedAt && readLocal()) return;
     state = stored;
     if (!state.projects.some((p) => p.id === state.active)) state.active = state.projects[0].id;
     ui.deviceId = project()?.devices[0]?.id || null;
@@ -282,17 +314,25 @@
     setSave("saved", "Сохранено");
   }
 
+  async function askPersist() {
+    try {
+      if (navigator.storage && typeof navigator.storage.persist === "function") await navigator.storage.persist();
+    } catch (err) { /* браузер не даёт — данные всё равно пишутся в IndexedDB */ }
+  }
+
   function saveNow() {
     clearTimeout(saveTimer);
     const snapshot = state;
+    const at = Date.now();
     let localOk = false;
     try {
       localStorage.setItem(STORE, JSON.stringify(snapshot));
+      localStorage.setItem(STORE_AT, String(at));
       localOk = true;
     } catch (err) {
       localOk = false;
     }
-    idbPut(snapshot).then(() => {
+    idbSave(snapshot, at).then(() => {
       storageMode = "idb";
       setSave("saved", localOk ? "Сохранено" : "Сохранено в IndexedDB");
     }).catch(() => {
@@ -303,6 +343,7 @@
   }
 
   function touch() {
+    bootDirty = true;
     setSave("dirty", "Есть изменения");
     clearTimeout(saveTimer);
     saveTimer = setTimeout(saveNow, 600);
@@ -325,10 +366,46 @@
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
   }
 
+  function stateFileText() {
+    return JSON.stringify({ format: "data-sheet-editor", version: 1, savedAt: new Date().toISOString(), ...state });
+  }
+
+  let fileHandle = null;
+  const canPickFiles = () => typeof window.showSaveFilePicker === "function" && typeof window.showOpenFilePicker === "function";
+  const fileTypes = [{ description: "Файл проекта", accept: { "application/json": [".json"] } }];
+
+  function renderFileLabel() {
+    const el = $("#file-label");
+    if (!el) return;
+    const name = fileHandle ? fileHandle.name : "";
+    el.dataset.state = name ? "linked" : "none";
+    el.textContent = name ? `Файл: ${name} — Ctrl+S перезаписывает его` : "Файл на диске не выбран — работа хранится в браузере";
+    el.hidden = false;
+  }
+
+  async function loadFileHandle() {
+    try {
+      const stored = await withTimeout(idbGet(DB_KEY_FILE), 1500);
+      if (stored && typeof stored.createWritable === "function") fileHandle = stored;
+    } catch (err) {
+      fileHandle = null;
+    }
+    renderFileLabel();
+  }
+
+  async function ensureWritePermission(handle) {
+    if (typeof handle.queryPermission !== "function") return true;
+    let perm = "granted";
+    try { perm = await handle.queryPermission({ mode: "readwrite" }); } catch (err) { perm = "granted"; }
+    if (perm === "granted") return true;
+    if (typeof handle.requestPermission !== "function") return false;
+    try { perm = await handle.requestPermission({ mode: "readwrite" }); } catch (err) { return false; }
+    return perm === "granted";
+  }
+
   function saveStateFile() {
     try {
-      const text = JSON.stringify({ format: "data-sheet-editor", version: 1, savedAt: new Date().toISOString(), ...state });
-      const blob = new Blob([text], { type: "application/json" });
+      const blob = new Blob([stateFileText()], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -337,9 +414,38 @@
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 4000);
-      toast("Файл проекта сохранён");
+      toast("Файл проекта скачан");
     } catch (err) {
       console.error(err);
+      toast("Не удалось сохранить файл: " + (err.message || err), true);
+    }
+  }
+
+  async function saveProjectFile(forcePicker = false) {
+    if (!canPickFiles()) { saveStateFile(); return; }
+    try {
+      if (!fileHandle || forcePicker) {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: fileHandle ? fileHandle.name : `Data_Sheet-${stateFileStamp()}.json`,
+          types: fileTypes
+        });
+        fileHandle = handle;
+        idbPut(handle, DB_KEY_FILE).catch(() => {});
+      }
+      if (!(await ensureWritePermission(fileHandle))) {
+        fileHandle = null;
+        idbPut(null, DB_KEY_FILE).catch(() => {});
+        renderFileLabel();
+        toast("Нет доступа к файлу — выберите его заново", true);
+        return;
+      }
+      const writable = await fileHandle.createWritable();
+      await writable.write(stateFileText());
+      await writable.close();
+      renderFileLabel();
+      toast(`Сохранено в «${fileHandle.name}»`);
+    } catch (err) {
+      if (err && (err.name === "AbortError" || err.code === 20)) return;
       toast("Не удалось сохранить файл: " + (err.message || err), true);
     }
   }
@@ -351,51 +457,66 @@
     input.click();
   }
 
-  function openStateFile(file) {
+  async function applyProjectFile(file, handle) {
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      let parsed;
-      try {
-        parsed = JSON.parse(String(reader.result));
-      } catch (err) {
-        toast("Файл не читается: это не JSON проекта", true);
-        return;
-      }
-      const projects = parsed && Array.isArray(parsed.projects) ? parsed.projects : null;
-      if (!projects || !projects.length) {
-        toast("В файле нет проектов — похоже, это другой файл", true);
-        return;
-      }
-      const count = projects.reduce((n, p) => n + ((p.devices || []).length), 0);
-      askConfirm({
-        title: "Открыть файл проекта",
-        text: `Загрузить «${file.name}»: проектов ${projects.length}, листов ${count}. Текущая работа в браузере будет заменена содержимым файла.`,
-        ok: "Загрузить файл"
-      }).then((ok) => {
-        if (!ok) return;
-        state = ensureReference({
-          version: 1,
-          active: parsed.active || projects[0]?.id,
-          projects: projects.map((p) => ({
-            id: p.id || uid("p"),
-            name: p.name || "Проект",
-            devices: (p.devices || []).map(normalizeDevice)
-          }))
-        });
-        if (!state.projects.some((p) => p.id === state.active)) state.active = state.projects[0].id;
-        ui.deviceId = project()?.devices[0]?.id || null;
-        ui.kitId = null;
-        ui.rowId = null;
-        ui.cellId = null;
-        ui.lang = "ru";
-        saveNow();
-        render();
-        toast(`Файл загружен: ${count} листов`);
-      });
-    };
-    reader.onerror = () => toast("Не удалось прочитать файл", true);
-    reader.readAsText(file);
+    let parsed;
+    try {
+      parsed = JSON.parse(String(await file.text()));
+    } catch (err) {
+      toast("Файл не читается: это не JSON проекта", true);
+      return;
+    }
+    const projects = parsed && Array.isArray(parsed.projects) ? parsed.projects : null;
+    if (!projects || !projects.length) {
+      toast("В файле нет проектов — похоже, это другой файл", true);
+      return;
+    }
+    const count = projects.reduce((n, p) => n + ((p.devices || []).length), 0);
+    const ok = await askConfirm({
+      title: "Открыть файл проекта",
+      text: `Загрузить «${file.name}»: проектов ${projects.length}, листов ${count}. Текущая работа в браузере будет заменена содержимым файла.`,
+      ok: "Загрузить файл"
+    });
+    if (!ok) return;
+    state = ensureReference({
+      version: 1,
+      active: parsed.active || projects[0]?.id,
+      projects: projects.map((p) => ({
+        id: p.id || uid("p"),
+        name: p.name || "Проект",
+        devices: (p.devices || []).map(normalizeDevice)
+      }))
+    });
+    if (!state.projects.some((p) => p.id === state.active)) state.active = state.projects[0].id;
+    ui.deviceId = project()?.devices[0]?.id || null;
+    ui.kitId = null;
+    ui.rowId = null;
+    ui.cellId = null;
+    ui.lang = "ru";
+    if (handle) {
+      fileHandle = handle;
+      idbPut(handle, DB_KEY_FILE).catch(() => {});
+    }
+    bootDirty = true;
+    saveNow();
+    render();
+    renderFileLabel();
+    toast(`Файл загружен: ${count} листов`);
+  }
+
+  async function openProjectFile() {
+    if (!canPickFiles()) { pickStateFile(); return; }
+    try {
+      const [handle] = await window.showOpenFilePicker({ types: fileTypes, multiple: false });
+      await applyProjectFile(await handle.getFile(), handle);
+    } catch (err) {
+      if (err && (err.name === "AbortError" || err.code === 20)) return;
+      toast("Не удалось открыть файл: " + (err.message || err), true);
+    }
+  }
+
+  function openStateFile(file) {
+    applyProjectFile(file, null);
   }
 
   /* ---------------- model helpers ---------------- */
@@ -1784,9 +1905,16 @@
     });
 
     $("#btn-export").addEventListener("click", exportBook);
-    $("#btn-save-file").addEventListener("click", saveStateFile);
-    $("#btn-open-file").addEventListener("click", pickStateFile);
+    $("#btn-save-file").addEventListener("click", () => saveProjectFile(false));
+    $("#btn-save-as").addEventListener("click", () => saveProjectFile(true));
+    $("#btn-open-file").addEventListener("click", openProjectFile);
     $("#file-state").addEventListener("change", (e) => openStateFile(e.target.files && e.target.files[0]));
+    document.addEventListener("keydown", (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+      if (String(e.key).toLowerCase() !== "s") return;
+      e.preventDefault();
+      saveProjectFile(false);
+    });
     $("#btn-new-sheet").addEventListener("click", newDevice);    $("#btn-project-add").addEventListener("click", addProject);
     $("#btn-project-rename").addEventListener("click", renameProject);
     $("#btn-project-del").addEventListener("click", deleteProject);
@@ -1866,7 +1994,10 @@
     bind();
     render();
     setSave("saved", "Сохранено");
-    if (!local) hydrateFromIdb();
+    renderFileLabel();
+    loadFileHandle();
+    askPersist();
+    syncFromIdb();
   }
 
   boot();

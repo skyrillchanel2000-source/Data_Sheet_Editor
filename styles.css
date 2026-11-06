@@ -309,6 +309,10 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .side-files .btn { min-width: 0; padding: 0 8px; }
 .sidebar-foot > .btn { min-width: 0; }
 .side-hint { grid-column: 1 / -1; color: var(--danger); font-size: 10.5px; line-height: 1.35; padding: 0 2px; }
+.side-files { grid-template-columns: 1fr 1fr; }
+.side-files #btn-open-file { grid-column: 1 / -1; }
+.file-label { grid-column: 1 / -1; font-size: 10.5px; line-height: 1.35; padding: 0 2px; color: var(--muted); overflow-wrap: anywhere; }
+.file-label[data-state="linked"] { color: var(--blue-700); }
 
 /* ---------------- buttons ---------------- */
 

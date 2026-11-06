@@ -47,9 +47,11 @@
       <div class="save-state" id="save-state" data-state="saved"><span></span>Сохранено</div>
       <div class="side-hint" id="storage-hint" hidden>Браузер не сохраняет данные — скачайте файл проекта, иначе работа пропадёт.</div>
       <div class="side-files">
-        <button class="btn btn-sm btn-soft" id="btn-save-file" title="Скачать файл проекта (.json)">Сохранить файл</button>
-        <button class="btn btn-sm" id="btn-open-file" title="Открыть файл проекта (.json)">Открыть файл</button>
+        <button class="btn btn-sm btn-soft" id="btn-save-file" title="Сохранить в выбранный файл на диске (Ctrl+S)">Сохранить</button>
+        <button class="btn btn-sm btn-soft" id="btn-save-as" title="Выбрать файл проекта на диске (.json)">Сохранить как</button>
+        <button class="btn btn-sm" id="btn-open-file" title="Открыть файл проекта (.json)">Открыть</button>
       </div>
+      <div class="file-label" id="file-label" hidden></div>
       <button class="btn btn-primary" id="btn-export">
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.8v9.4m0 0 3.4-3.4M10 12.2 6.6 8.8M3.6 13.2v3.4h12.8v-3.4"/></svg>
         Скачать Excel
