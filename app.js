@@ -531,7 +531,21 @@
   }
 
   const REF_OWNER = "skyrillchanel2000-source";
+  const KEY_STORE = "ds-editor-ref-key";
   let refKey = null;
+
+  function readStoredKey() {
+    try { return localStorage.getItem(KEY_STORE) || ""; } catch (err) { return ""; }
+  }
+
+  function storeKey(token) {
+    try { localStorage.setItem(KEY_STORE, token); } catch (err) { /* браузер не даёт — ключ живёт до перезагрузки */ }
+  }
+
+  function forgetStoredKey() {
+    try { localStorage.removeItem(KEY_STORE); } catch (err) { /* нечего забывать */ }
+    refKey = null;
+  }
 
   function setKeyError(text) {
     const box = $("#key-error");
@@ -546,17 +560,34 @@
     else if (dlg) dlg.removeAttribute("open");
   }
 
-  function openKeyDialog() {
+  function openKeyDialog(message) {
     const dlg = $("#key-dialog");
     const input = $("#key-input");
     if (!dlg || !input) return;
     input.value = "";
-    setKeyError("");
+    setKeyError(message || "");
     const apply = $("#key-apply");
     if (apply) { apply.disabled = false; apply.textContent = "Проверить и включить"; }
     if (typeof dlg.showModal === "function") dlg.showModal();
     else dlg.setAttribute("open", "");
     setTimeout(() => input.focus(), 30);
+  }
+
+  async function checkToken(token) {
+    try {
+      const res = await fetch("https://api.github.com/user", {
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" }
+      });
+      if (res.status === 401) return { ok: false, error: "Токен неверный или истёк" };
+      if (!res.ok) return { ok: false, error: `GitHub ответил ${res.status} — попробуйте позже` };
+      const user = await res.json();
+      if (!user || user.login !== REF_OWNER) {
+        return { ok: false, error: `Это токен аккаунта «${user && user.login ? user.login : "неизвестно"}», а нужен ${REF_OWNER}` };
+      }
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: "Не удалось проверить ключ: нужен интернет и доступ к api.github.com" };
+    }
   }
 
   async function verifyRefKey() {
@@ -567,38 +598,47 @@
     if (apply) { apply.disabled = true; apply.textContent = "Проверяю…"; }
     setKeyError("");
     try {
-      const res = await fetch("https://api.github.com/user", {
-        headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" }
-      });
-      if (res.status === 401) { setKeyError("Токен неверный или истёк"); return; }
-      if (!res.ok) { setKeyError(`GitHub ответил ${res.status} — попробуйте позже`); return; }
-      const user = await res.json();
-      if (!user || user.login !== REF_OWNER) {
-        setKeyError(`Это токен аккаунта «${user && user.login ? user.login : "неизвестно"}», а нужен ${REF_OWNER}`);
-        return;
-      }
+      const res = await checkToken(token);
+      if (!res.ok) { setKeyError(res.error); return; }
       refKey = token;
+      storeKey(token);
       ui.refEdit = true;
       closeKeyDialog();
       render();
       toast("Ключ принят — правка эталона включена");
-    } catch (err) {
-      setKeyError("Не удалось проверить ключ: нужен интернет и доступ к api.github.com");
     } finally {
       if (apply) { apply.disabled = false; apply.textContent = "Проверить и включить"; }
     }
   }
 
-  function toggleRefEdit() {
+  async function toggleRefEdit() {
     if (!isReference()) return;
     if (ui.refEdit) {
       ui.refEdit = false;
-      refKey = null;
       render();
-      toast("Правка эталона выключена");
+      toast("Правка эталона выключена — ключ остался в браузере");
       return;
     }
-    openKeyDialog();
+    const stored = readStoredKey();
+    if (!stored) { openKeyDialog(); return; }
+    toast("Проверяю сохранённый ключ…");
+    const res = await checkToken(stored);
+    if (res.ok) {
+      refKey = stored;
+      ui.refEdit = true;
+      render();
+      toast("Ключ принят — правка эталона включена");
+      return;
+    }
+    forgetStoredKey();
+    openKeyDialog(`${res.error} — введите токен заново`);
+  }
+
+  function forgetRefKey() {
+    forgetStoredKey();
+    ui.refEdit = false;
+    render();
+    toast("Ключ удалён — он больше не хранится в этом браузере");
   }
 
   /* ---------------- render: sidebar ---------------- */
@@ -686,10 +726,12 @@
   function refBarHTML() {
     if (!isReference()) return "";
     const on = ui.refEdit;
+    const hasKey = Boolean(readStoredKey());
     return `<div class="ref-banner${on ? " on" : ""}" id="ref-banner">
       <span class="ref-banner-text">${on
         ? "Правка эталона включена: изменения попадут во все проекты, куда прибор добавляется из «Все листы»."
         : "Эталон «Все листы» защищён. Правка включается кнопкой «Редактировать эталон» — только после подтверждения."}</span>
+      ${hasKey ? '<button class="btn btn-sm btn-soft" data-act="forget-ref-key" title="Удалить сохранённый ключ из этого браузера">Забыть ключ</button>' : ""}
       <button class="btn btn-sm${on ? " btn-pink" : ""}" data-act="toggle-ref-edit">${on ? "Выключить правку эталона" : "Редактировать эталон"}</button>
     </div>`;
   }
@@ -950,7 +992,7 @@
     "add-tag", "del-tag", "paste-tags"
   ]);
 
-  const REF_FREE_ACTS = new Set(["to-ref", "toggle-ref-edit", "lang", "kit"]);
+  const REF_FREE_ACTS = new Set(["to-ref", "toggle-ref-edit", "forget-ref-key", "lang", "kit"]);
 
   function applyRefState() {
     const host = $("#editor");
@@ -1593,6 +1635,7 @@
       const act = el.dataset.act;
       if (act === "to-ref") { restoreToReference(); return; }
       if (act === "toggle-ref-edit") { toggleRefEdit(); return; }
+      if (act === "forget-ref-key") { forgetRefKey(); return; }
       if (refLocked() && REF_LOCKED_ACTS.has(act)) {
         toast("Эталон защищён: включите «Редактировать эталон»", true);
         return;
