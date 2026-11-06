@@ -998,6 +998,55 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 .toast.err { background: var(--danger); }
 
+/* ---------------- split RU + EN ---------------- */
+
+.editor.split-mode { max-width: 1780px; }
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.split-col { min-width: 0; }
+.split-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-2);
+}
+.split-tag {
+  height: 22px;
+  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--blue-100);
+  border-radius: 99px;
+  background: var(--blue-50);
+  color: var(--blue-700);
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: .05em;
+}
+.split-col[data-panel="en"] .split-tag { border-color: var(--pink-100); background: var(--pink-50); color: var(--pink-600); }
+.split .card-head { padding: 14px 14px 12px; gap: 10px; }
+.split .card-head h2 { font-size: 14px; }
+.split .card-head p { font-size: 11px; }
+.split .card-body { padding: 0 14px 16px; }
+.split .field-grid { grid-template-columns: 1fr; }
+.split .num-row { grid-template-columns: 1fr 1fr; }
+.split .num-row .field:last-child { grid-column: 1 / -1; }
+.split .col-head, .split .table-toolbar, .split .sheet-table, .split .table-foot { margin-left: 12px; margin-right: 12px; }
+.split .col-head { padding: 0 0 10px; }
+.split .table-toolbar { margin-bottom: 10px; }
+.split .add-row { width: calc(100% - 24px); margin-left: 12px; margin-right: 12px; }
+.split .tr { grid-template-columns: 40% 60%; }
+.split .td.label { font-size: 13px; padding: 6px 7px; }
+.split .vcell { font-size: 13px; padding: 6px 6px; }
+.split .row-plus { opacity: 1; right: 2px; }
+
+@media (max-width: 1240px) {
+  .split { grid-template-columns: minmax(0, 1fr); }
+  .split .field-grid { grid-template-columns: 1fr 1fr; }
+}
+
 /* ---------------- responsive ---------------- */
 
 @media (max-width: 980px) {

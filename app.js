@@ -22,8 +22,24 @@
     ["Масса, кг", "Weight, kg"]
   ];
 
+  const LANG_STORE = "ds-editor-lang";
+  const LANGS = ["both", "ru", "en", "tag"];
+
+  function readLang() {
+    try {
+      const saved = localStorage.getItem(LANG_STORE);
+      return LANGS.includes(saved) ? saved : "both";
+    } catch (err) {
+      return "both";
+    }
+  }
+
+  function saveLang(lang) {
+    try { localStorage.setItem(LANG_STORE, lang); } catch (err) { /* не критично */ }
+  }
+
   let state;
-  let ui = { projectId: null, deviceId: null, kitId: null, lang: "ru", search: "", rowId: null, cellId: null, col: 0, refEdit: false };
+  let ui = { projectId: null, deviceId: null, kitId: null, lang: readLang(), search: "", rowId: null, cellId: null, col: 0, refEdit: false };
   let saveTimer = 0;
   let toastTimer = 0;
   let imageTarget = null;
@@ -492,7 +508,7 @@
     ui.kitId = null;
     ui.rowId = null;
     ui.cellId = null;
-    ui.lang = "ru";
+    ui.lang = readLang();
     if (handle) {
       fileHandle = handle;
       idbPut(handle, DB_KEY_FILE).catch(() => {});
@@ -820,8 +836,7 @@
     const lang = ui.lang;
     const isKit = item !== d;
     const numText = isKit ? `${numberOf(d)} · ${item.titleRu || "комплект"}` : numberOf(d);
-    const fields = lang === "tag" ? "" : metaHTML(item, lang, d, isKit);
-    const table = lang === "tag" ? tagsHTML(item, d) : tableHTML(item, lang);
+    host.classList.toggle("split-mode", lang === "both");
 
     host.innerHTML = `
       <div class="sheet-top">
@@ -829,9 +844,10 @@
         <div class="top-actions">
           <button class="btn btn-sm btn-soft" data-act="to-ref" title="${isReference() ? "Вернуть лист к встроенной эталонной копии" : "Заменить лист версией из эталона «Все листы»"}">Привести к эталону</button>
           <div class="seg" role="tablist" aria-label="Язык листа">
-            <button data-act="lang" data-lang="ru" class="${lang === "ru" ? "active" : ""}">RU</button>
-            <button data-act="lang" data-lang="en" class="${lang === "en" ? "active" : ""}">EN</button>
-            <button data-act="lang" data-lang="tag" class="${lang === "tag" ? "active" : ""}">TAG</button>
+            <button data-act="lang" data-lang="both" class="${lang === "both" ? "active" : ""}" title="Русский и английский листы рядом">RU+EN</button>
+            <button data-act="lang" data-lang="ru" class="${lang === "ru" ? "active" : ""}" title="Только русский лист">RU</button>
+            <button data-act="lang" data-lang="en" class="${lang === "en" ? "active" : ""}" title="Только английский лист">EN</button>
+            <button data-act="lang" data-lang="tag" class="${lang === "tag" ? "active" : ""}" title="Страница тегов">TAG</button>
           </div>
           <button class="icon-btn" data-act="dup-sheet" title="Дублировать лист" aria-label="Дублировать лист"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="6.5" y="3.5" width="9" height="11" rx="1.6"/><path d="M4 6.5v9.2A1.3 1.3 0 0 0 5.3 17H13"/></svg></button>
           <button class="icon-btn danger" data-act="del-sheet" title="Удалить лист" aria-label="Удалить лист"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 5.5h13M8 5.5V4h4v1.5M5.5 5.5l.8 11h7.4l.8-11M8.5 8.5v5M11.5 8.5v5"/></svg></button>
@@ -839,9 +855,27 @@
       </div>
       ${refBarHTML()}
       ${kitBar(d)}
-      ${fields}
-      ${table}
+      ${bodyHTML(item, d, lang, isKit)}
     `;
+  }
+
+  function bodyHTML(item, d, lang, isKit) {
+    if (lang === "tag") return tagsHTML(item, d);
+    if (lang === "both") {
+      return `<div class="split">
+        ${splitPaneHTML(item, d, "ru", isKit)}
+        ${splitPaneHTML(item, d, "en", isKit)}
+      </div>`;
+    }
+    return `${metaHTML(item, lang, d, isKit, false)}${tableHTML(item, lang)}`;
+  }
+
+  function splitPaneHTML(item, d, lang, isKit) {
+    return `<div class="split-col" data-panel="${lang}">
+      <div class="split-head"><span class="split-tag">${lang.toUpperCase()}</span><span>${lang === "ru" ? "Русский лист" : "English sheet"}</span></div>
+      ${metaHTML(item, lang, d, isKit, true)}
+      ${tableHTML(item, lang)}
+    </div>`;
   }
 
   function refBarHTML() {
@@ -878,25 +912,31 @@
     </div></div>`;
   }
 
-  function metaHTML(d, lang, parent, isKit) {
+  function metaHTML(d, lang, parent, isKit, split) {
     const ru = lang === "ru";
     const titleLabel = ru ? (isKit ? "Название комплекта (RU)" : "Название прибора (RU)") : (isKit ? "Kit name (EN)" : "Название прибора (EN)");
     const scopeLabel = ru ? "Область применения (RU)" : "Application area (EN)";
     const introLabel = ru ? "Подводка к таблице (RU)" : "Intro before the table (EN)";
-    return `<section class="card">
-      <div class="card-head">
-        <div><h2>${isKit ? "Комплект" : "Основное"}</h2><p>${isKit ? "Отдельная таблица характеристик гильзы/манифольда к прибору." : "Номер закреплён за прибором; лист проекта можно переименовать."}</p></div>
-        <div class="num-badge">${isKit ? "к №" + esc(numberOf(parent)) : "№" + esc(numberOf(d))}</div>
-      </div>
-      <div class="card-body">
-        ${isKit ? `<p class="field-note" style="margin:0 0 10px">Комплект печатается отдельными листами RU/EN после листов прибора.</p>` : `<div class="num-row" style="margin-bottom:12px">
+    const secondTitle = split ? "" : `<label class="field"><span>${ru ? "Второе название (EN)" : "Второе название (RU)"}</span><input value="${esc(ru ? d.titleEn : d.titleRu)}" data-model="${ru ? "titleEn" : "titleRu"}"></label>`;
+    const numRow = isKit
+      ? `<p class="field-note" style="margin:0 0 10px">Комплект печатается отдельными листами RU/EN после листов прибора.</p>`
+      : (split && !ru)
+        ? ""
+        : `<div class="num-row" style="margin-bottom:12px">
           <label class="field"><span>Номер прибора</span><input type="number" min="1" step="1" value="${esc(d.no)}" data-model="no"></label>
           <label class="field"><span>Лист прибора</span><input value="${esc(d.suffix)}" placeholder="например 1.2" data-model="suffix"></label>
           <label class="field"><span>Название проекта</span><input value="${esc(project().name)}" data-model="projectName"></label>
-        </div>`}
-        <div class="field-grid">
+        </div>`;
+    return `<section class="card">
+      <div class="card-head">
+        <div><h2>${isKit ? "Комплект" : "Основное"}</h2><p>${isKit ? "Отдельная таблица характеристик гильзы/манифольда к прибору." : (split ? "Номер и проект — в левой колонке." : "Номер закреплён за прибором; лист проекта можно переименовать.")}</p></div>
+        <div class="num-badge" data-num="device">${isKit ? "к №" + esc(numberOf(parent)) : "№" + esc(numberOf(d))}</div>
+      </div>
+      <div class="card-body">
+        ${numRow}
+        <div class="field-grid${split ? " single" : ""}">
           <label class="field"><span>${titleLabel}</span><input value="${esc(ru ? d.titleRu : d.titleEn)}" data-model="${ru ? "titleRu" : "titleEn"}" placeholder="${ru ? "ЭМИС-БАР 143" : "EMIS-BAR 143"}"></label>
-          <label class="field"><span>${ru ? "Второе название (EN)" : "Второе название (RU)"}</span><input value="${esc(ru ? d.titleEn : d.titleRu)}" data-model="${ru ? "titleEn" : "titleRu"}"></label>
+          ${secondTitle}
           <label class="field full"><span>${scopeLabel}</span><textarea rows="2" data-model="${ru ? "scopeRu" : "scopeEn"}" placeholder="${ru ? "для контроля запыленности фильтра…" : "to control the filter dustiness…"}">${esc(ru ? d.scopeRu : d.scopeEn)}</textarea></label>
           <label class="field full"><span>${introLabel}</span><textarea rows="2" data-model="${ru ? "introRu" : "introEn"}">${esc(ru ? d.introRu : d.introEn)}</textarea></label>
           <label class="field full"><span>${ru ? "Подпись таблицы (RU)" : "Table caption (EN)"}</span><textarea rows="2" data-model="${ru ? "nameRu" : "nameEn"}" placeholder="${ru ? "Таблица 1 – Технические характеристики датчика …" : "Table 1 - Technical characteristics of the transmitter …"}">${esc(ru ? (d.nameRu || "") : (d.nameEn || ""))}</textarea></label>
@@ -933,7 +973,7 @@
         <span class="hint">Колонки листа</span>
         <div class="column-strip">${d.columns.map((c, i) => colChipHTML(d, c, i)).join("")}</div>
       </div>
-      <div class="table-toolbar" id="table-toolbar">${toolbarHTML(d)}</div>
+      <div class="table-toolbar">${toolbarHTML(d)}</div>
       <div class="sheet-table">
         <div class="tr head"><div class="td label">${head[0]}</div><div class="td value"><div class="vgrid"><div class="vcell" style="--gsp:12">${head[1]}</div></div></div></div>
         ${rows || '<div class="tr"><div class="td label" style="color:#8aa3ba;font-family:var(--ui);font-size:12px">Нет строк — добавьте первую</div><div class="td value"><div class="vgrid"><div class="vcell" style="--gsp:12"></div></div></div></div>'}
@@ -987,9 +1027,9 @@
   }
 
   function refreshToolbar() {
-    const box = $("#table-toolbar");
     const d = sheet();
-    if (box && d) box.innerHTML = toolbarHTML(d);
+    if (!d) return;
+    $$(".table-toolbar", $("#editor")).forEach((box) => { box.innerHTML = toolbarHTML(d); });
   }
 
   function refreshSelection() {
@@ -998,12 +1038,10 @@
     $$(".vcell.selected", $("#editor")).forEach((el) => el.classList.remove("selected"));
     $$(".tr.selected", $("#editor")).forEach((el) => el.classList.remove("selected"));
     if (ui.rowId) {
-      const rowEl = $(`.tr[data-row="${ui.rowId}"]`, $("#editor"));
-      if (rowEl) rowEl.classList.add("selected");
+      $$(`.tr[data-row="${ui.rowId}"]`, $("#editor")).forEach((el) => el.classList.add("selected"));
     }
     if (ui.cellId) {
-      const cellEl = $(`.vcell[data-c="${ui.cellId}"]`, $("#editor"));
-      if (cellEl) cellEl.classList.add("selected");
+      $$(`.vcell[data-c="${ui.cellId}"]`, $("#editor")).forEach((el) => el.classList.add("selected"));
     }
     refreshToolbar();
   }
@@ -1096,9 +1134,9 @@
     const d = sheet();
     if (d) {
       const host = $("#editor");
-      const card = host.querySelector(".card:last-of-type");
-      if (card && ui.lang !== "tag") {
-        card.insertAdjacentHTML("afterend", figuresHTML(d));
+      const anchor = host.querySelector(".split") || host.querySelector(".card:last-of-type");
+      if (anchor && ui.lang !== "tag") {
+        anchor.insertAdjacentHTML("afterend", figuresHTML(d));
       }
     }
     applyRefState();
@@ -1155,8 +1193,7 @@
       renderSidebar();
       const crumb = $(".crumbs b");
       if (crumb) crumb.textContent = `Лист №${numberOf(d)}`;
-      const badge = $(".num-badge");
-      if (badge) badge.textContent = `№${numberOf(d)}`;
+      $$('[data-num="device"]', $("#editor")).forEach((badge) => { badge.textContent = `№${numberOf(d)}`; });
     }
   }
 
@@ -1165,7 +1202,8 @@
     if (!d) return;
     const row = d.rows.find((r) => r.id === el.dataset.r);
     if (!row) return;
-    const ru = ui.lang === "ru";
+    const panel = el.closest("[data-panel]");
+    const ru = (panel ? panel.dataset.panel : ui.lang) === "ru";
     const value = el.innerText.replace(/\u00a0/g, " ").replace(/\n$/, "");
     if (el.dataset.edit === "label") {
       row[ru ? "labelRu" : "labelEn"] = value;
@@ -1511,7 +1549,7 @@
     p.devices.push(d);
     ui.deviceId = d.id;
     ui.kitId = null;
-    ui.lang = "ru";
+    ui.lang = readLang();
     touch();
     render();
     const input = $('input[data-model="titleRu"]', $("#editor"));
@@ -1559,7 +1597,7 @@
     state.projects.push(p);
     state.active = p.id;
     ui.deviceId = null;
-    ui.lang = "ru";
+    ui.lang = readLang();
     touch();
     render();
   }
@@ -1673,7 +1711,7 @@
     ui.kitId = null;
     ui.rowId = null;
     ui.cellId = null;
-    ui.lang = "ru";
+    ui.lang = readLang();
     refSelected = new Set();
     const dlg = $("#ref-dialog");
     if (dlg && typeof dlg.close === "function") dlg.close();
@@ -1812,7 +1850,14 @@
         render();
         return;
       }
-      if (act === "lang") { ui.lang = el.dataset.lang; ui.rowId = null; ui.cellId = null; render(); return; }
+      if (act === "lang") {
+        ui.lang = el.dataset.lang;
+        saveLang(ui.lang);
+        ui.rowId = null;
+        ui.cellId = null;
+        render();
+        return;
+      }
       if (act === "sheet") { focusDevice(el.dataset.id); return; }
       if (act === "new-sheet") { newDevice(); return; }
       if (act === "dup-sheet") { duplicateDevice(); return; }
