@@ -530,24 +530,75 @@
     });
   }
 
+  const REF_OWNER = "skyrillchanel2000-source";
+  let refKey = null;
+
+  function setKeyError(text) {
+    const box = $("#key-error");
+    if (!box) return;
+    box.textContent = text || "";
+    box.hidden = !text;
+  }
+
+  function closeKeyDialog() {
+    const dlg = $("#key-dialog");
+    if (dlg && typeof dlg.close === "function") dlg.close();
+    else if (dlg) dlg.removeAttribute("open");
+  }
+
+  function openKeyDialog() {
+    const dlg = $("#key-dialog");
+    const input = $("#key-input");
+    if (!dlg || !input) return;
+    input.value = "";
+    setKeyError("");
+    const apply = $("#key-apply");
+    if (apply) { apply.disabled = false; apply.textContent = "Проверить и включить"; }
+    if (typeof dlg.showModal === "function") dlg.showModal();
+    else dlg.setAttribute("open", "");
+    setTimeout(() => input.focus(), 30);
+  }
+
+  async function verifyRefKey() {
+    const input = $("#key-input");
+    const apply = $("#key-apply");
+    const token = (input ? input.value : "").trim();
+    if (!token) { setKeyError("Вставьте токен"); return; }
+    if (apply) { apply.disabled = true; apply.textContent = "Проверяю…"; }
+    setKeyError("");
+    try {
+      const res = await fetch("https://api.github.com/user", {
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" }
+      });
+      if (res.status === 401) { setKeyError("Токен неверный или истёк"); return; }
+      if (!res.ok) { setKeyError(`GitHub ответил ${res.status} — попробуйте позже`); return; }
+      const user = await res.json();
+      if (!user || user.login !== REF_OWNER) {
+        setKeyError(`Это токен аккаунта «${user && user.login ? user.login : "неизвестно"}», а нужен ${REF_OWNER}`);
+        return;
+      }
+      refKey = token;
+      ui.refEdit = true;
+      closeKeyDialog();
+      render();
+      toast("Ключ принят — правка эталона включена");
+    } catch (err) {
+      setKeyError("Не удалось проверить ключ: нужен интернет и доступ к api.github.com");
+    } finally {
+      if (apply) { apply.disabled = false; apply.textContent = "Проверить и включить"; }
+    }
+  }
+
   function toggleRefEdit() {
     if (!isReference()) return;
     if (ui.refEdit) {
       ui.refEdit = false;
+      refKey = null;
       render();
       toast("Правка эталона выключена");
       return;
     }
-    askConfirm({
-      title: "Редактировать эталон",
-      text: "Вы собираетесь править эталон «Все листы». Его изменения попадут во все проекты, куда прибор добавляется из эталона. Включить редактирование?",
-      ok: "Включить правку"
-    }).then((ok) => {
-      if (!ok) return;
-      ui.refEdit = true;
-      render();
-      toast("Правка эталона включена");
-    });
+    openKeyDialog();
   }
 
   /* ---------------- render: sidebar ---------------- */
@@ -1747,6 +1798,11 @@
       const fn = confirmWaiter;
       confirmWaiter = null;
       if (fn) fn(false);
+    });
+    $("#key-apply").addEventListener("click", verifyRefKey);
+    const keyInput = $("#key-input");
+    if (keyInput) keyInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); verifyRefKey(); }
     });
     $("#search").addEventListener("input", (e) => { ui.search = e.target.value; renderSidebar(); });
     window.addEventListener("beforeunload", saveNow);
