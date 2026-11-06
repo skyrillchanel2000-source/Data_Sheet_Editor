@@ -471,6 +471,9 @@
   /* ---------------- tags page ---------------- */
 
   const TAG_LAST_COL = 22;
+  const TAG_COLS_MAX = 4;
+  const TAG_ROWS_MIN = 4;
+  const TAG_COL_PX = 38;
 
   function tagsPage(doc, device) {
     const marks = device.markings || [];
@@ -502,28 +505,27 @@
     };
 
     /* Теги идут сверху вниз, затем в следующую колонку. Номер один — в первой
-       колонке; вместо переноса на новую страницу сначала добавляются колонки:
-       4 строки, колонок столько, сколько нужно (не больше 16). */
+       колонке. Колонок не больше четырёх: чем длиннее тег, тем меньше колонок
+       и шире объединение, чтобы текст помещался в одну строку. */
     const drawGrid = (tags, start, height) => {
       const left = tags.length - start;
       const blank = !tags.some(Boolean);
-      const maxCols = TAG_LAST_COL - COLS.F;
+      const areaCols = TAG_LAST_COL - COLS.F;
+      const fits = (list, widthPx) => list.every((t) => !t || textLines(t, widthPx) <= 1);
       let rows;
       let cols;
       if (blank) {
         rows = Math.min(left, Math.max(1, height));
         cols = 1;
       } else {
-        rows = Math.min(4, left);
-        cols = Math.ceil(left / rows);
-        if (cols > maxCols) { cols = maxCols; rows = Math.ceil(left / cols); }
-        if (rows > height) {
-          rows = Math.max(1, height);
-          cols = Math.min(maxCols, Math.ceil(left / rows));
-        }
+        const page = tags.slice(start);
+        cols = TAG_COLS_MAX;
+        while (cols > 1 && !fits(page, Math.round(areaCols * TAG_COL_PX / cols) - 8)) cols -= 1;
+        rows = Math.max(Math.min(TAG_ROWS_MIN, page.length), Math.ceil(page.length / cols));
+        if (rows > height) rows = Math.max(1, height);
       }
       const bounds = [];
-      for (let j = 0; j <= cols; j += 1) bounds.push(COLS.F + 1 + Math.round(j * maxCols / cols));
+      for (let j = 0; j <= cols; j += 1) bounds.push(COLS.F + 1 + Math.round(j * areaCols / cols));
       for (let i = 0; i < rows; i += 1) {
         doc.cell(row, COLS.F, String(i + 1), S.thinCenter);
         for (let j = 0; j < cols; j += 1) {
