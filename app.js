@@ -910,12 +910,9 @@
   /* ---------------- render: table ---------------- */
 
   function colChipHTML(d, col, i) {
-    const row = selectedRow(d);
-    const current = row && ui.cellId ? cellAt(row, i) : null;
-    return `<span class="col-chip${current && current.id === ui.cellId ? " current" : ""}">
+    return `<span class="col-chip static" title="Колонка ${i + 1}">
       <span class="col-index">${i + 1}</span>
-      <input value="${esc(col.name)}" data-col="${i}" aria-label="Название колонки ${i + 1}">
-      <button class="del" data-act="del-col" data-col="${i}" title="Удалить колонку" aria-label="Удалить колонку ${i + 1}">×</button>
+      <span class="col-name">${esc(col.name || `Колонка ${i + 1}`)}</span>
     </span>`;
   }
 
@@ -929,14 +926,12 @@
     const rows = d.rows.map((row, ri) => rowHTML(d, row, ri, ru)).join("");
     return `<section class="card">
       <div class="card-head">
-        <div><h2>Таблица 1 — технические характеристики</h2><p>Колонки — исполнения или датчики. Общие значения объединяйте по колонкам.</p></div>
+        <div><h2>Таблица 1 — технические характеристики</h2><p>«+» справа от строки задаёт число колонок в ней (1–4), кнопки ⇄ над строкой объединяют соседние ячейки.</p></div>
         <div class="num-badge">${d.rows.length} строк · ${d.columns.length} кол.</div>
       </div>
       <div class="col-head">
-        <span class="hint">Колонки значений</span>
-        <div class="column-strip">${d.columns.map((c, i) => colChipHTML(d, c, i)).join("")}
-          <button class="col-add" data-act="add-col">+ колонка</button>
-        </div>
+        <span class="hint">Колонки листа</span>
+        <div class="column-strip">${d.columns.map((c, i) => colChipHTML(d, c, i)).join("")}</div>
       </div>
       <div class="table-toolbar" id="table-toolbar">${toolbarHTML(d)}</div>
       <div class="sheet-table">
@@ -963,27 +958,32 @@
         data-ph="${ru ? "значение" : "value"}">${esc(text)}</div>`;
     }).join("");
     const label = String((ru ? row.labelRu : row.labelEn) || "");
+    const total = Math.max(1, cellTotal(row));
+    const mergeBar = ui.rowId === row.id && row.cells.length > 1
+      ? `<div class="merge-bar">${row.cells.slice(0, -1).map((cell, i) => {
+        const left = row.cells.slice(0, i + 1).reduce((n, c) => n + c.span, 0);
+        return `<button class="merge-dot" style="left:${(left / total) * 100}%" data-act="merge-at" data-r="${row.id}" data-i="${i}" title="Объединить ${i + 1}-ю и ${i + 2}-ю ячейки" aria-label="Объединить ячейки">⇄</button>`;
+      }).join("")}</div>`
+      : "";
     return `<div class="tr${ui.rowId === row.id ? " selected" : ""}" data-row="${row.id}">
       <div class="td label" contenteditable="true" spellcheck="false" data-edit="label" data-r="${row.id}" data-ph="${ru ? "параметр" : "parameter"}">${esc(label)}</div>
-      <div class="td value"><div class="vgrid">${cells}</div></div>
+      <div class="td value">${mergeBar}<div class="vgrid">${cells}</div>
+        <button class="row-plus" data-act="row-cols" data-r="${row.id}" title="Сколько колонок в этой строке" aria-label="Колонки строки ${ri + 1}">+</button>
+      </div>
     </div>`;
   }
 
   function toolbarHTML(d) {
     const row = selectedRow(d);
     const cell = row && ui.cellId ? row.cells.find((c) => c.id === ui.cellId) : null;
-    const idx = cell ? cellIndex(row, cell.id) : -1;
     const info = row
-      ? `Строка ${d.rows.indexOf(row) + 1}${cell ? " · " + (cell.span > 1 ? `объединено ${cell.span} кол.` : "ячейка") : ""}`
-      : "Выберите строку или ячейку";
+      ? `Строка ${d.rows.indexOf(row) + 1} · колонок ${row.cells.length} из ${d.columns.length}${cell ? (cell.span > 1 ? ` · объединено ${cell.span}` : "") : ""}`
+      : "Нажмите на строку, затем «+» справа — выберите, сколько в ней колонок";
     return `<span class="sel-info">${esc(info)}</span>
       <button class="tool-btn" data-act="row-up" ${row ? "" : "disabled"} title="Выше">↑</button>
       <button class="tool-btn" data-act="row-down" ${row ? "" : "disabled"} title="Ниже">↓</button>
       <button class="tool-btn" data-act="add-row" ${row ? "" : "disabled"}>+ строка</button>
-      <button class="tool-btn pink" data-act="del-row" ${row ? "" : "disabled"}>− строка</button>
-      <button class="tool-btn" data-act="add-col-here" ${cell ? "" : "disabled"}>+ колонка</button>
-      <button class="tool-btn" data-act="merge-cell" ${cell && idx >= 0 && idx < row.cells.length - 1 ? "" : "disabled"}>Объединить →</button>
-      <button class="tool-btn" data-act="split-cell" ${cell && cell.span > 1 ? "" : "disabled"}>Разъединить</button>`;
+      <button class="tool-btn pink" data-act="del-row" ${row ? "" : "disabled"}>− строка</button>`;
   }
 
   function refreshToolbar() {
@@ -1107,8 +1107,8 @@
   /* ---------------- reference lock ---------------- */
 
   const REF_LOCKED_ACTS = new Set([
-    "dup-sheet", "del-sheet", "add-kit", "del-kit", "add-col", "del-col", "add-col-here",
-    "add-row", "del-row", "row-up", "row-down", "merge-cell", "split-cell",
+    "dup-sheet", "del-sheet", "add-kit", "del-kit", "row-cols", "merge-at",
+    "add-row", "del-row", "row-up", "row-down",
     "add-fig", "del-fig", "pick-image", "add-mark", "del-mark", "add-group", "del-group",
     "add-tag", "del-tag", "paste-tags"
   ]);
@@ -1229,68 +1229,106 @@
     render();
   }
 
-  function addColumn(afterIndex) {
-    const d = sheet();
-    const n = d.columns.length;
-    const insertAt = afterIndex == null ? n : Math.max(0, Math.min(n, Number(afterIndex) + 1));
-    d.columns.splice(insertAt, 0, { id: uid("k"), name: `Колонка ${insertAt + 1}` });
+  function splitSpans(total, n) {
+    const base = Math.floor(total / n);
+    const rem = total % n;
+    return Array.from({ length: n }, (_, i) => Math.max(1, base + (i < rem ? 1 : 0)));
+  }
+
+  function growColumns(d, target) {
+    const from = d.columns.length;
+    if (target <= from) return;
+    for (let i = from; i < target; i += 1) d.columns.push({ id: uid("k"), name: `Колонка ${i + 1}` });
     d.rows.forEach((row) => {
-      const out = [];
-      let pos = 0;
-      let done = false;
-      row.cells.forEach((cell) => {
-        if (done) { out.push(cell); pos += cell.span; return; }
-        if (insertAt === pos) {
-          out.push(newCell(1));
-          out.push(cell);
-          done = true;
-          pos += cell.span;
-          return;
-        }
-        if (insertAt > pos && insertAt < pos + cell.span) {
-          const left = insertAt - pos;
-          const right = cell.span - left;
-          out.push({ ...cell, span: left });
-          out.push(newCell(1));
-          if (right > 0) out.push({ ...cell, id: uid("c"), span: right, ru: "", en: "" });
-          done = true;
-          pos += cell.span;
-          return;
-        }
-        out.push(cell);
-        pos += cell.span;
-      });
-      if (!done) out.push(newCell(1));
-      row.cells = out;
+      const total = cellTotal(row);
+      if (!total) { row.cells = [newCell(target)]; return; }
+      const cells = row.cells.map((cell) => ({ ...cell, span: Math.max(1, Math.round((cell.span * target) / total)) }));
+      let sum = cells.reduce((n, c) => n + c.span, 0);
+      let guard = 0;
+      while (sum !== target && guard < 64) {
+        const wide = cells.slice().reverse().find((c) => c.span > 1);
+        if (sum < target) { cells[0].span += 1; sum += 1; }
+        else if (wide) { wide.span -= 1; sum -= 1; }
+        else break;
+        guard += 1;
+      }
+      row.cells = cells;
     });
+  }
+
+  function setRowCells(row, n) {
+    const d = sheet();
+    if (!row) return;
+    const want = Math.max(1, Math.min(4, Number(n) || 1));
+    growColumns(d, want);
+    const spans = splitSpans(d.columns.length, want);
+    const texts = row.cells.map((c) => ({ ru: c.ru || "", en: c.en || "" }));
+    const cells = spans.map((span, i) => ({
+      id: uid("c"),
+      span,
+      ru: texts[i] ? texts[i].ru : "",
+      en: texts[i] ? texts[i].en : ""
+    }));
+    if (texts.length > want) {
+      const last = cells[cells.length - 1];
+      const rest = texts.slice(want);
+      ["ru", "en"].forEach((k) => {
+        const extra = rest.map((t) => String(t[k] || "").trim()).filter(Boolean);
+        if (!extra.length) return;
+        const head = String(last[k] || "").trim();
+        last[k] = [head, ...extra].filter(Boolean).join("\n");
+      });
+    }
+    row.cells = cells;
+    ui.rowId = row.id;
+    ui.cellId = cells[0].id;
     touch();
     render();
   }
 
-  function delColumn(index) {
+  function mergeAt(row, index) {
+    if (!row || index < 0 || index >= row.cells.length - 1) return;
+    ui.rowId = row.id;
+    ui.cellId = row.cells[index].id;
+    mergeCell();
+  }
+
+  let colsMenu = null;
+
+  function onColsMenuDown(e) {
+    if (colsMenu && !colsMenu.contains(e.target)) closeColsMenu();
+  }
+
+  function closeColsMenu() {
+    if (!colsMenu) return;
+    colsMenu.remove();
+    colsMenu = null;
+    document.removeEventListener("mousedown", onColsMenuDown, true);
+  }
+
+  function openColsMenu(anchor) {
     const d = sheet();
-    if (d.columns.length <= 1) { toast("Нельзя удалить единственную колонку", true); return; }
-    const name = d.columns[index]?.name || `Колонка ${index + 1}`;
-    if (!confirm(`Удалить колонку «${name}»? Значения в этой колонке будут удалены.`)) return;
-    d.rows.forEach((row) => {
-      let at = 0;
-      for (let i = 0; i < row.cells.length; i += 1) {
-        const cell = row.cells[i];
-        if (index >= at && index < at + cell.span) {
-          if (cell.span > 1) cell.span -= 1;
-          else row.cells.splice(i, 1);
-          break;
-        }
-        at += cell.span;
-      }
-      let total = cellTotal(row);
-      while (total < d.columns.length - 1) { row.cells.push(newCell(1)); total += 1; }
+    const row = d && d.rows.find((r) => r.id === anchor.dataset.r);
+    if (!row) return;
+    closeColsMenu();
+    const menu = document.createElement("div");
+    menu.className = "cols-menu";
+    menu.innerHTML = `<span class="cols-menu-title">Колонок в строке</span>
+      <div class="cols-menu-row">${[1, 2, 3, 4].map((n) => `<button data-n="${n}"${row.cells.length === n ? ' class="on"' : ""}>${n}</button>`).join("")}</div>`;
+    document.body.appendChild(menu);
+    const box = anchor.getBoundingClientRect();
+    const width = 172;
+    menu.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 8, box.right - width))}px`;
+    menu.style.top = `${Math.min(window.innerHeight - 90, box.bottom + 6)}px`;
+    colsMenu = menu;
+    menu.addEventListener("click", (e) => {
+      const pick = e.target.closest("button[data-n]");
+      if (!pick) return;
+      const n = Number(pick.dataset.n);
+      closeColsMenu();
+      setRowCells(row, n);
     });
-    d.columns.splice(index, 1);
-    if (ui.col >= d.columns.length) ui.col = d.columns.length - 1;
-    if (ui.cellId && !d.rows.some((r) => r.cells.some((c) => c.id === ui.cellId))) ui.cellId = null;
-    touch();
-    render();
+    setTimeout(() => document.addEventListener("mousedown", onColsMenuDown, true), 0);
   }
 
   let pendingMerge = null;
@@ -1311,6 +1349,7 @@
       else if (dlg) dlg.setAttribute("open", "");
       return;
     }
+    pendingMerge = { rowId: row.id, cellId: a.id };
     doMerge("both");
   }
 
@@ -1785,15 +1824,17 @@
       if (act === "kit") { ui.kitId = el.dataset.id || null; ui.rowId = null; ui.cellId = null; render(); return; }
       if (act === "add-kit") { addKit(); return; }
       if (act === "del-kit") { delKit(); return; }
-      if (act === "add-col") { addColumn(); return; }
-      if (act === "add-col-here") { addColumn(ui.col); return; }
-      if (act === "del-col") { delColumn(Number(el.dataset.col)); return; }
       if (act === "add-row") { addRow(ui.rowId); return; }
       if (act === "del-row") { deleteRow(); return; }
       if (act === "row-up") { moveRow(-1); return; }
       if (act === "row-down") { moveRow(1); return; }
-      if (act === "merge-cell") { mergeCell(); return; }
-      if (act === "split-cell") { splitCell(); return; }
+      if (act === "row-cols") { openColsMenu(el); return; }
+      if (act === "merge-at") {
+        const d = sheet();
+        const row = d && d.rows.find((r) => r.id === ui.rowId);
+        mergeAt(row, Number(el.dataset.i));
+        return;
+      }
       if (act === "add-fig") { addFigure(); return; }
       if (act === "del-fig") {
         const d = sheet();
