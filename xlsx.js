@@ -470,17 +470,61 @@
 
   /* ---------------- tags page ---------------- */
 
+  const TAG_COLS_MAX = 4;
+  const TAG_LAST_COL = 22;
+
   function tagsPage(doc, device) {
     const marks = device.markings || [];
     const groups = device.tagGroups || [];
     const texts = (list) => (Array.isArray(list) ? list : []).map((t) => String(t == null ? "" : t).trim());
     const count = Math.max(marks.length, groups.length);
 
-    const top = doc.newPage();
+    let top = doc.newPage();
     doc.number(top, `TAG №${device.no}`);
-    if (!count) { doc.protectFrame(top); return; }
     let row = top + 3;
-    const bottom = top + FRAME_ROWS;
+    let bottom = top + FRAME_ROWS;
+    const pages = [top];
+
+    const openPage = () => {
+      top = doc.newPage();
+      doc.number(top, `TAG №${device.no}`);
+      pages.push(top);
+      row = top + 3;
+      bottom = top + FRAME_ROWS;
+    };
+
+    const drawHeader = (scope) => {
+      for (let r = row; r <= row + 2; r += 1) {
+        for (let c = COLS.F; c <= TAG_LAST_COL; c += 1) doc.cell(r, c, "", S.thinCenter);
+      }
+      doc.merge(row, COLS.F, row + 2, COLS.F, "№", S.thinCenter);
+      doc.merge(row, COLS.F + 1, row + 2, TAG_LAST_COL, scope, S.thinCenter);
+      row += 3;
+    };
+
+    /* Теги идут сверху вниз, затем в следующую колонку: на одной странице
+       столько колонок, сколько нужно, чтобы блок уместился по высоте. */
+    const drawGrid = (tags, start, height) => {
+      const left = tags.length - start;
+      const k = Math.min(TAG_COLS_MAX, Math.max(1, Math.ceil(left / Math.max(1, height))));
+      const rows = Math.min(Math.max(1, height), Math.ceil(left / k));
+      const bounds = [];
+      for (let j = 0; j <= k; j += 1) bounds.push(COLS.F + Math.round(j * (TAG_LAST_COL - COLS.F + 1) / k));
+      for (let i = 0; i < rows; i += 1) {
+        for (let j = 0; j < k; j += 1) {
+          const idx = start + j * rows + i;
+          const numCol = bounds[j];
+          const from = numCol + 1;
+          const to = Math.max(from, bounds[j + 1] - 1);
+          doc.cell(row, numCol, idx < tags.length ? String(idx + 1) : "", S.thinCenter);
+          doc.merge(row, from, row, to, idx < tags.length ? (tags[idx] || "") : "", S.thinCenter);
+        }
+        row += 1;
+      }
+      return start + k * rows;
+    };
+
+    if (!count) { doc.protectFrame(top); return; }
 
     for (let i = 0; i < count; i += 1) {
       const mark = marks[i] || {};
@@ -491,29 +535,28 @@
       const scope = scopeRu && scopeEn ? `${scopeRu} /\n${scopeEn}` : (scopeRu || scopeEn);
       const ownTags = texts(group.tags);
       const refTags = texts(mark.tags);
-      const tags = ownTags.some(Boolean) ? ownTags : refTags;
-      const rows = tags.length || Math.max(0, Number(mark.rows) || 0) || (code ? 22 : 0);
+      const filled = ownTags.some(Boolean) ? ownTags : refTags;
+      const rows = filled.length || Math.max(0, Number(mark.rows) || 0) || (code ? 22 : 0);
       if (!code && !scope && !rows) continue;
-      const need = (code ? 2 : 0) + 3 + rows;
-      if (row + need - 1 > bottom) break;
-      if (code) {
-        doc.merge(row, COLS.F, row + 1, COLS.X, code, S.marking);
-        row += 2;
-      }
-      for (let r = row; r <= row + 2; r += 1) {
-        for (let c = COLS.F; c <= 22; c += 1) doc.cell(r, c, "", S.thinCenter);
-      }
-      doc.merge(row, COLS.F, row + 2, COLS.F, "№", S.thinCenter);
-      doc.merge(row, 7, row + 2, 22, scope, S.thinCenter);
-      row += 3;
-      for (let i2 = 0; i2 < rows; i2 += 1) {
-        for (let c = COLS.F; c <= 22; c += 1) doc.cell(row, c, "", S.thinCenter);
-        doc.cell(row, COLS.F, String(i2 + 1), S.thinCenter);
-        doc.merge(row, 7, row, 22, tags[i2] || "", S.thinCenter);
-        row += 1;
+      const tags = filled.length ? filled : Array.from({ length: rows }, () => "");
+
+      let first = true;
+      let start = 0;
+      while (start < tags.length) {
+        const headNeed = (first && code ? 2 : 0) + 3 + 1;
+        if (row + headNeed - 1 > bottom) openPage();
+        if (first && code) {
+          doc.merge(row, COLS.F, row + 1, COLS.X, code, S.marking);
+          row += 2;
+        }
+        drawHeader(scope);
+        if (row > bottom) { openPage(); continue; }
+        start = drawGrid(tags, start, bottom - row + 1);
+        first = false;
       }
     }
-    doc.protectFrame(top);
+
+    pages.forEach((p) => doc.protectFrame(p));
   }
 
   /* ---------------- xml ---------------- */
