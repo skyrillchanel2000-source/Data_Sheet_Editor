@@ -472,32 +472,42 @@
 
   function tagsPage(doc, device) {
     const marks = device.markings || [];
+    const groups = device.tagGroups || [];
+    const texts = (list) => (Array.isArray(list) ? list : []).map((t) => String(t == null ? "" : t).trim());
+    const count = Math.max(marks.length, groups.length);
 
     const top = doc.newPage();
     doc.number(top, `TAG №${device.no}`);
-    if (!marks.length) { doc.protectFrame(top); return; }
+    if (!count) { doc.protectFrame(top); return; }
     let row = top + 3;
     const bottom = top + FRAME_ROWS;
 
-    for (const mark of marks) {
-      const code = String(mark.code || "").trim();
-      const tags = (mark.tags || []).map((t) => String(t == null ? "" : t));
-      const rows = Math.max(0, Number(mark.rows) || 0) || tags.length;
-      const need = 2 + 3 + rows;
+    for (let i = 0; i < count; i += 1) {
+      const mark = marks[i] || {};
+      const group = groups[i] || {};
+      const code = clean(mark.code || "");
+      const scope = clean(group.scopeRu || group.scopeEn || mark.note || "");
+      const ownTags = texts(group.tags);
+      const refTags = texts(mark.tags);
+      const tags = ownTags.some(Boolean) ? ownTags : refTags;
+      const rows = tags.length || Math.max(0, Number(mark.rows) || 0) || (code ? 22 : 0);
+      if (!code && !scope && !rows) continue;
+      const need = (code ? 2 : 0) + 3 + rows;
       if (row + need - 1 > bottom) break;
-      doc.merge(row, COLS.F, row + 1, COLS.X, code, S.marking);
-      row += 2;
-      if (!code && !rows) continue;
+      if (code) {
+        doc.merge(row, COLS.F, row + 1, COLS.X, code, S.marking);
+        row += 2;
+      }
       for (let r = row; r <= row + 2; r += 1) {
         for (let c = COLS.F; c <= 22; c += 1) doc.cell(r, c, "", S.thinCenter);
       }
       doc.merge(row, COLS.F, row + 2, COLS.F, "№", S.thinCenter);
-      doc.merge(row, 7, row + 2, 22, String(mark.note || "").trim(), S.thinCenter);
+      doc.merge(row, 7, row + 2, 22, scope, S.thinCenter);
       row += 3;
-      for (let i = 0; i < rows; i += 1) {
+      for (let i2 = 0; i2 < rows; i2 += 1) {
         for (let c = COLS.F; c <= 22; c += 1) doc.cell(row, c, "", S.thinCenter);
-        doc.cell(row, COLS.F, String(i + 1), S.thinCenter);
-        doc.cell(row, 7, tags[i] || "", S.thinCenter);
+        doc.cell(row, COLS.F, String(i2 + 1), S.thinCenter);
+        doc.merge(row, 7, row, 22, tags[i2] || "", S.thinCenter);
         row += 1;
       }
     }
