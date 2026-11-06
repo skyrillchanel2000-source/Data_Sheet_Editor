@@ -110,6 +110,20 @@
     return { id: uid("c"), span, ru: "", en: "" };
   }
 
+  /* «Отсутствует» в английских ячейках раньше оставалось по-русски или
+     превращалось в «No». Приводим к единому «Not available» на загрузке. */
+  const ABSENT_EN = new Set(["отсутствует", "отсутсвует", "отсутствуют", "no"]);
+
+  function fixAbsentCells(rows) {
+    (rows || []).forEach((row) => {
+      (row.cells || []).forEach((cell) => {
+        const ru = String(cell.ru || "").trim().toLowerCase();
+        const en = String(cell.en || "").trim();
+        if (ru.startsWith("отсутс") && ABSENT_EN.has(en.toLowerCase())) cell.en = "Not available";
+      });
+    });
+  }
+
   function normalizeDevice(d, index) {
     const hasPages = Array.isArray(d.pages) && d.pages.length > 0;
     const source = hasPages ? d.pages[0] : d;
@@ -161,6 +175,7 @@
       while (total < max) { row.cells.push(newCell(1)); total += 1; }
       return row;
     });
+    fixAbsentCells(device.rows);
     device.figures = device.figures.map((f) => ({
       id: f.id || uid("f"),
       image: f.image || "",
