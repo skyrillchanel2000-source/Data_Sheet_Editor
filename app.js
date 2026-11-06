@@ -1468,9 +1468,52 @@
 
   /* ---------------- export ---------------- */
 
-  function exportBook() {
+  const imageDataCache = new Map();
+
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error || new Error("не удалось прочитать рисунок"));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  async function resolveFigureImages(snapshot) {
+    const paths = new Set();
+    const collect = (item) => {
+      (item.figures || []).forEach((f) => { if (f.image && !/^data:/i.test(f.image)) paths.add(f.image); });
+      (item.kits || []).forEach(collect);
+    };
+    (snapshot.projects || []).forEach((p) => (p.devices || []).forEach(collect));
+
+    let failed = 0;
+    await Promise.all(Array.from(paths).map(async (path) => {
+      if (imageDataCache.has(path)) return;
+      try {
+        const res = await fetch(path);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        imageDataCache.set(path, await blobToDataUrl(await res.blob()));
+      } catch (err) {
+        failed += 1;
+      }
+    }));
+
+    const apply = (item) => {
+      (item.figures || []).forEach((f) => {
+        if (f.image && !/^data:/i.test(f.image) && imageDataCache.has(f.image)) f.image = imageDataCache.get(f.image);
+      });
+      (item.kits || []).forEach(apply);
+    };
+    (snapshot.projects || []).forEach((p) => (p.devices || []).forEach(apply));
+    return failed;
+  }
+
+  async function exportBook() {
     try {
-      const result = window.DSXlsx.build(state, { measure: textLines });
+      const snapshot = clone(state);
+      const failed = await resolveFigureImages(snapshot);
+      const result = window.DSXlsx.build(snapshot, { measure: textLines });
       if (!result || !result.blob) throw new Error("Не удалось собрать книгу");
       const url = URL.createObjectURL(result.blob);
       const a = document.createElement("a");
@@ -1480,7 +1523,8 @@
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 4000);
-      toast(`Excel собран: ${result.sheets} лист(ов), ${result.pages} страниц`);
+      if (failed) toast(`Excel собран, но ${failed} рисунков не загрузилось — нужен сайт или локальный сервер`, true);
+      else toast(`Excel собран: ${result.sheets} лист(ов), ${result.pages} страниц`);
     } catch (err) {
       console.error(err);
       toast("Ошибка выгрузки: " + (err.message || err), true);
