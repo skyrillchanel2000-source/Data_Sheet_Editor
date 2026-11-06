@@ -486,7 +486,9 @@
       const mark = marks[i] || {};
       const group = groups[i] || {};
       const code = clean(mark.code || "");
-      const scope = clean(group.scopeRu || group.scopeEn || mark.note || "");
+      const scopeRu = clean(group.scopeRu || mark.note || "");
+      const scopeEn = clean(group.scopeEn || "");
+      const scope = scopeRu && scopeEn ? `${scopeRu} /\n${scopeEn}` : (scopeRu || scopeEn);
       const ownTags = texts(group.tags);
       const refTags = texts(mark.tags);
       const tags = ownTags.some(Boolean) ? ownTags : refTags;
