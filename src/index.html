@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Data Sheet Editor — листы технических данных</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32"><path d="M6 5h20M6 27h20M9.5 5v22M22.5 5v22M6 11h20M6 21h20"/><path class="brand-accent" d="M13 14h6v4h-6z"/></svg>
+      </div>
+      <div class="brand-text">
+        <h1>Data Sheet Editor</h1>
+        <p>Листы технических данных КИП</p>
+      </div>
+    </div>
+
+    <section class="side-block projects-block">
+      <div class="side-label">
+        <span>Проекты</span>
+        <span class="side-label-actions">
+          <button class="mini-btn" id="btn-project-rename" title="Переименовать проект" aria-label="Переименовать проект">✎</button>
+          <button class="mini-btn danger" id="btn-project-del" title="Удалить проект" aria-label="Удалить проект">×</button>
+          <button class="mini-btn" id="btn-project-add" title="Новый проект" aria-label="Новый проект">+</button>
+        </span>
+      </div>
+      <div class="project-tabs" id="project-tabs" role="tablist" aria-label="Проекты"></div>
+    </section>
+
+    <label class="search">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5.4"/><path d="m13.2 13.2 4 4"/></svg>
+      <input type="search" id="search" placeholder="Прибор, номер, тег" aria-label="Поиск по листам">
+    </label>
+
+    <div class="list-head">
+      <span id="sheet-count">0 листов</span>
+      <button class="link-btn" id="btn-ref-add">+ из «Все листы»</button>
+    </div>
+
+    <div class="sheet-list" id="sheet-list" role="list"></div>
+
+    <div class="sidebar-foot">
+      <div class="save-state" id="save-state" data-state="saved"><span></span>Сохранено</div>
+      <div class="side-hint" id="storage-hint" hidden>Браузер не сохраняет данные — скачайте файл проекта, иначе работа пропадёт.</div>
+      <div class="side-files">
+        <button class="btn btn-sm btn-soft" id="btn-save-file" title="Скачать файл проекта (.json)">Сохранить файл</button>
+        <button class="btn btn-sm" id="btn-open-file" title="Открыть файл проекта (.json)">Открыть файл</button>
+      </div>
+      <button class="btn btn-primary" id="btn-export">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.8v9.4m0 0 3.4-3.4M10 12.2 6.6 8.8M3.6 13.2v3.4h12.8v-3.4"/></svg>
+        Скачать Excel
+      </button>
+      <button class="btn btn-soft" id="btn-new-sheet">+ Новый лист</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div id="editor" class="editor"></div>
+  </main>
+</div>
+
+<dialog class="dialog" id="ref-dialog">
+  <div class="dialog-head">
+    <div>
+      <h2>Добавить листы</h2>
+      <p>Отметьте листы из эталонного проекта «Все листы» — можно несколько сразу.</p>
+    </div>
+    <button class="icon-btn" data-close-dialog aria-label="Закрыть">✕</button>
+  </div>
+  <div class="dialog-body">
+    <label class="search search-inline">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5.4"/><path d="m13.2 13.2 4 4"/></svg>
+      <input type="search" id="ref-search" placeholder="Найти прибор" aria-label="Поиск в эталоне">
+    </label>
+    <div class="ref-tools">
+      <button class="btn btn-sm btn-soft" type="button" id="ref-all">Выбрать всё</button>
+      <button class="btn btn-sm btn-soft" type="button" id="ref-none">Снять выбор</button>
+      <span class="ref-count" id="ref-count">Ничего не выбрано</span>
+    </div>
+    <div class="ref-list" id="ref-list"></div>
+    <div class="dialog-actions" style="margin-top:12px">
+      <button class="btn btn-soft" type="button" data-close-dialog>Отмена</button>
+      <button class="btn btn-primary" type="button" id="ref-apply" disabled>Добавить выбранные</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog class="dialog" id="tags-dialog">
+  <div class="dialog-head">
+    <div>
+      <h2>Вставить все теги</h2>
+      <p>Скопируйте столбец тегов из Excel и вставьте сюда — по одному тегу в строке.</p>
+    </div>
+    <button class="icon-btn" data-close-dialog aria-label="Закрыть">✕</button>
+  </div>
+  <div class="dialog-body">
+    <textarea id="tags-area" rows="10" aria-label="Теги — по одному в строке" placeholder="TE-101&#10;TE-102&#10;TE-103"></textarea>
+    <div class="dialog-actions" style="margin-top:12px">
+      <button class="btn btn-ghost" type="button" data-close-dialog>Отмена</button>
+      <button class="btn btn-primary" type="button" id="tags-apply">Добавить теги</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog class="dialog" id="confirm-dialog">
+  <div class="dialog-head">
+    <div>
+      <h2 id="confirm-title">Подтверждение</h2>
+      <p id="confirm-text"></p>
+    </div>
+    <button class="icon-btn" data-close-dialog aria-label="Закрыть">✕</button>
+  </div>
+  <div class="dialog-body">
+    <div class="dialog-actions">
+      <button class="btn btn-soft" type="button" id="confirm-cancel">Отмена</button>
+      <button class="btn btn-primary" type="button" id="confirm-ok">Подтвердить</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog class="dialog" id="merge-dialog">
+  <div class="dialog-head">
+    <div>
+      <h2>В ячейках есть текст</h2>
+      <p>Что оставить после объединения?</p>
+    </div>
+  </div>
+  <div class="dialog-body">
+    <div class="dialog-actions">
+      <button class="btn btn-soft" type="button" data-merge-mode="left">Левое значение</button>
+      <button class="btn btn-soft" type="button" data-merge-mode="right">Правое значение</button>
+      <button class="btn btn-primary" type="button" data-merge-mode="both">Оба (в две строки)</button>
+    </div>
+  </div>
+</dialog>
+
+<input type="file" id="file-image" accept="image/*" aria-label="Файл рисунка" hidden>
+<input type="file" id="file-state" accept=".json,application/json" aria-label="Файл проекта" hidden>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="seed.js"></script>
+<script src="xlsx.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
