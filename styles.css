@@ -1001,6 +1001,20 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 /* ---------------- split RU + EN ---------------- */
 
 .editor.split-mode { max-width: 1780px; }
+.shared-bar {
+  display: grid;
+  grid-template-columns: 150px 170px minmax(0, 1fr);
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.shared-bar .field input { height: 34px; }
+.shared-note { color: var(--muted); font-size: 11.5px; line-height: 1.45; }
 .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
 .split-col { min-width: 0; }
 .split-head {
@@ -1040,7 +1054,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .split .tr { grid-template-columns: 40% 60%; }
 .split .td.label { font-size: 13px; padding: 6px 7px; }
 .split .vcell { font-size: 13px; padding: 6px 6px; }
-.split .row-plus { opacity: 1; right: 2px; }
+.split .row-plus { right: 2px; }
 
 @media (max-width: 1240px) {
   .split { grid-template-columns: minmax(0, 1fr); }
@@ -1084,6 +1098,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
   .figure-thumb { height: 150px; }
   .tag-grid { grid-template-columns: 1fr; }
   .num-row { grid-template-columns: 1fr; }
+  .shared-bar { grid-template-columns: 1fr; }
   .mark-row { grid-template-columns: 1fr 30px; }
   .mark-row .field:last-of-type { grid-column: 1 / -1; }
 }

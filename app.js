@@ -862,12 +862,23 @@
   function bodyHTML(item, d, lang, isKit) {
     if (lang === "tag") return tagsHTML(item, d);
     if (lang === "both") {
-      return `<div class="split">
+      return `${sharedBarHTML(d, isKit)}<div class="split">
         ${splitPaneHTML(item, d, "ru", isKit)}
         ${splitPaneHTML(item, d, "en", isKit)}
       </div>`;
     }
     return `${metaHTML(item, lang, d, isKit, false)}${tableHTML(item, lang)}`;
+  }
+
+  function sharedBarHTML(d, isKit) {
+    if (isKit) {
+      return `<div class="shared-bar"><span class="shared-note">Комплект печатается отдельными листами RU/EN после листов прибора.</span></div>`;
+    }
+    return `<div class="shared-bar">
+      <label class="field"><span>Номер прибора</span><input type="number" min="1" step="1" value="${esc(d.no)}" data-model="no"></label>
+      <label class="field"><span>Лист прибора</span><input value="${esc(d.suffix)}" placeholder="например 1.2" data-model="suffix"></label>
+      <label class="field"><span>Название проекта</span><input value="${esc(project().name)}" data-model="projectName"></label>
+    </div>`;
   }
 
   function splitPaneHTML(item, d, lang, isKit) {
@@ -918,10 +929,10 @@
     const scopeLabel = ru ? "Область применения (RU)" : "Application area (EN)";
     const introLabel = ru ? "Подводка к таблице (RU)" : "Intro before the table (EN)";
     const secondTitle = split ? "" : `<label class="field"><span>${ru ? "Второе название (EN)" : "Второе название (RU)"}</span><input value="${esc(ru ? d.titleEn : d.titleRu)}" data-model="${ru ? "titleEn" : "titleRu"}"></label>`;
-    const numRow = isKit
-      ? `<p class="field-note" style="margin:0 0 10px">Комплект печатается отдельными листами RU/EN после листов прибора.</p>`
-      : (split && !ru)
-        ? ""
+    const numRow = split
+      ? ""
+      : isKit
+        ? `<p class="field-note" style="margin:0 0 10px">Комплект печатается отдельными листами RU/EN после листов прибора.</p>`
         : `<div class="num-row" style="margin-bottom:12px">
           <label class="field"><span>Номер прибора</span><input type="number" min="1" step="1" value="${esc(d.no)}" data-model="no"></label>
           <label class="field"><span>Лист прибора</span><input value="${esc(d.suffix)}" placeholder="например 1.2" data-model="suffix"></label>
@@ -929,7 +940,7 @@
         </div>`;
     return `<section class="card">
       <div class="card-head">
-        <div><h2>${isKit ? "Комплект" : "Основное"}</h2><p>${isKit ? "Отдельная таблица характеристик гильзы/манифольда к прибору." : (split ? "Номер и проект — в левой колонке." : "Номер закреплён за прибором; лист проекта можно переименовать.")}</p></div>
+        <div><h2>${isKit ? "Комплект" : "Основное"}</h2><p>${isKit ? "Отдельная таблица характеристик гильзы/манифольда к прибору." : "Номер закреплён за прибором; лист проекта можно переименовать."}</p></div>
         <div class="num-badge" data-num="device">${isKit ? "к №" + esc(numberOf(parent)) : "№" + esc(numberOf(d))}</div>
       </div>
       <div class="card-body">
