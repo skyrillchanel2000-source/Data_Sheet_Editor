@@ -108,6 +108,33 @@
   </div>
 </dialog>
 
+<dialog class="dialog" id="glossary-dialog">
+  <div class="dialog-head">
+    <div>
+      <h2>Глоссарий RU → EN</h2>
+      <p>Что на что переводит словарь. Свои пары важнее эталонных.</p>
+    </div>
+    <button class="icon-btn" data-close-dialog aria-label="Закрыть">✕</button>
+  </div>
+  <div class="dialog-body">
+    <label class="search search-inline">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5.4"/><path d="m13.2 13.2 4 4"/></svg>
+      <input type="search" id="gloss-search" placeholder="Термин на русском или английском" aria-label="Поиск по глоссарию">
+    </label>
+    <div class="gloss-add">
+      <input id="gloss-ru" placeholder="Русский термин" aria-label="Русский термин" autocomplete="off" spellcheck="false">
+      <input id="gloss-en" placeholder="English term" aria-label="Английский термин" autocomplete="off" spellcheck="false">
+      <button class="btn btn-sm btn-primary" type="button" id="gloss-add-btn">Добавить перевод</button>
+    </div>
+    <p class="key-error" id="gloss-error" hidden></p>
+    <div class="gloss-meta"><span id="gloss-count"></span><span class="gloss-tip">Строка из словаря подставляет пару в поля — можно поправить и добавить свою</span></div>
+    <div class="gloss-list" id="gloss-list"></div>
+    <div class="dialog-actions" style="margin-top:12px">
+      <button class="btn btn-ghost" type="button" data-close-dialog>Закрыть</button>
+    </div>
+  </div>
+</dialog>
+
 <dialog class="dialog" id="key-dialog">
   <div class="dialog-head">
     <div>

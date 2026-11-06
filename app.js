@@ -901,6 +901,7 @@
         <span class="switch-text">Синхронизация</span>
       </label>
       <span class="tr-hint" id="tr-hint">${esc(translateHint())}</span>
+      <button class="btn btn-sm btn-soft" data-act="glossary" title="Что на что переводится, и свои пары">Глоссарий</button>
       <button class="btn btn-sm btn-soft" data-act="translate-page" title="Перевести русский текст листа в английский по словарю">Перевести страницу</button>
     </div>`;
   }
@@ -1353,6 +1354,132 @@
     touch();
     render();
     toast(`Переведено: ${changed} полей${missing ? `, без перевода слов — ${missing}` : ""}`);
+  }
+
+  /* ---------------- глоссарий ---------------- */
+
+  const GLOSS_STORE = "ds-editor-gloss-v1";
+
+  function readGloss() {
+    try {
+      const raw = localStorage.getItem(GLOSS_STORE);
+      const parsed = raw ? JSON.parse(raw) : null;
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (err) {
+      return {};
+    }
+  }
+
+  function saveGloss(pairs) {
+    try {
+      localStorage.setItem(GLOSS_STORE, JSON.stringify(pairs));
+    } catch (err) {
+      toast("Браузер не даёт сохранить глоссарий", true);
+    }
+    if (window.DSTranslate) window.DSTranslate.setUser(pairs);
+  }
+
+  function glossKey(text) {
+    return String(text == null ? "" : text).replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function displayRu(text) {
+    const value = String(text || "").trim();
+    return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
+  }
+
+  function glossRows() {
+    const base = window.DSTranslate ? window.DSTranslate.base() : {};
+    const mine = readGloss();
+    const mineKeys = new Set(Object.keys(mine).map(glossKey));
+    const rows = Object.keys(mine)
+      .filter((ru) => String(mine[ru] || "").trim())
+      .map((ru) => ({ ru, en: mine[ru], mine: true }));
+    Object.keys(base).forEach((ru) => {
+      if (mineKeys.has(glossKey(ru))) return;
+      rows.push({ ru: displayRu(ru), en: base[ru], mine: false });
+    });
+    const rank = (row) => (row.mine ? 0 : (/^[А-Яа-яЁёA-Za-z]/.test(row.ru) ? 1 : 2));
+    rows.sort((a, b) => (rank(a) - rank(b)) || a.ru.localeCompare(b.ru, "ru"));
+    return rows;
+  }
+
+  function renderGlossList() {
+    const list = $("#gloss-list");
+    if (!list) return;
+    const input = $("#gloss-search");
+    const q = glossKey(input ? input.value : "");
+    const all = glossRows();
+    const rows = q ? all.filter((row) => glossKey(row.ru).includes(q) || glossKey(row.en).includes(q)) : all;
+    const mineCount = all.filter((row) => row.mine).length;
+    const count = $("#gloss-count");
+    if (count) {
+      count.textContent = `${rows.length} из ${all.length} пар (своих: ${mineCount}, словарь эталона: ${all.length - mineCount})`;
+    }
+    list.innerHTML = rows.length
+      ? rows.map((row) => `<div class="gloss-row${row.mine ? " mine" : ""}" data-ru="${esc(row.ru)}" data-en="${esc(row.en)}" title="Подставить в поля">
+          <span class="gloss-ru">${esc(row.ru)}</span>
+          <span class="gloss-arrow" aria-hidden="true">→</span>
+          <span class="gloss-en">${esc(row.en)}</span>
+          ${row.mine
+            ? `<button class="icon-btn danger" data-act="gloss-del" data-ru="${esc(row.ru)}" aria-label="Удалить свою пару">✕</button>`
+            : '<span class="gloss-badge">словарь</span>'}
+        </div>`).join("")
+      : '<div class="empty-list">Ничего не найдено — добавьте свою пару в полях выше.</div>';
+  }
+
+  function openGlossary() {
+    const error = $("#gloss-error");
+    if (error) error.hidden = true;
+    const search = $("#gloss-search");
+    if (search) search.value = "";
+    renderGlossList();
+    const dlg = $("#glossary-dialog");
+    if (dlg && typeof dlg.showModal === "function") dlg.showModal();
+    else if (dlg) dlg.setAttribute("open", "");
+    const ru = $("#gloss-ru");
+    if (ru) setTimeout(() => ru.focus(), 30);
+  }
+
+  function glossError(message) {
+    const error = $("#gloss-error");
+    if (!error) return;
+    error.textContent = message;
+    error.hidden = !message;
+  }
+
+  function addGlossPair() {
+    const ruEl = $("#gloss-ru");
+    const enEl = $("#gloss-en");
+    if (!ruEl || !enEl) return;
+    const ru = ruEl.value.replace(/\s+/g, " ").trim();
+    const en = enEl.value.replace(/\s+/g, " ").trim();
+    if (!ru && !en) { glossError("Введите русский и английский термин"); return; }
+    if (!ru) { glossError("Введите русский термин"); ruEl.focus(); return; }
+    if (!en) { glossError("Введите перевод на английский"); enEl.focus(); return; }
+    if (!/[А-Яа-яЁё]/.test(ru)) { glossError("Русский термин должен содержать русские буквы"); ruEl.focus(); return; }
+    const store = readGloss();
+    Object.keys(store).forEach((key) => {
+      if (glossKey(key) === glossKey(ru)) delete store[key];
+    });
+    store[ru] = en;
+    saveGloss(store);
+    glossError("");
+    ruEl.value = "";
+    enEl.value = "";
+    renderGlossList();
+    toast(`Своя пара добавлена: ${ru} → ${en}`);
+    ruEl.focus();
+  }
+
+  function deleteGlossPair(ru) {
+    const store = readGloss();
+    Object.keys(store).forEach((key) => {
+      if (glossKey(key) === glossKey(ru)) delete store[key];
+    });
+    saveGloss(store);
+    renderGlossList();
+    toast("Своя пара удалена");
   }
 
   function focusFrom(el) {
@@ -2008,6 +2135,8 @@
       if (act === "project-rename") { renameProject(); return; }
       if (act === "ref-open") { openRef(); return; }
       if (act === "translate-page") { translatePage(); return; }
+      if (act === "glossary") { openGlossary(); return; }
+      if (act === "gloss-del") { deleteGlossPair(el.dataset.ru); return; }
       if (act === "kit") { ui.kitId = el.dataset.id || null; ui.rowId = null; ui.cellId = null; render(); return; }
       if (act === "add-kit") { addKit(); return; }
       if (act === "del-kit") { delKit(); return; }
@@ -2235,6 +2364,28 @@
       confirmWaiter = null;
       if (fn) fn(false);
     });
+    $("#gloss-search").addEventListener("input", renderGlossList);
+    $("#gloss-add-btn").addEventListener("click", addGlossPair);
+    ["gloss-ru", "gloss-en"].forEach((id) => {
+      const input = $(`#${id}`);
+      if (!input) return;
+      input.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        addGlossPair();
+      });
+    });
+    $("#gloss-list").addEventListener("click", (e) => {
+      if (e.target.closest('[data-act="gloss-del"]')) return;
+      const row = e.target.closest(".gloss-row");
+      if (!row) return;
+      const ru = $("#gloss-ru");
+      const en = $("#gloss-en");
+      if (ru) ru.value = row.dataset.ru;
+      if (en) en.value = row.dataset.en;
+      glossError("");
+      if (ru) { ru.focus(); ru.select(); }
+    });
     $("#key-apply").addEventListener("click", verifyRefKey);
     const keyInput = $("#key-input");
     if (keyInput) keyInput.addEventListener("keydown", (e) => {
@@ -2256,6 +2407,7 @@
     if (!state.projects.some((p) => p.id === state.active)) state.active = state.projects[0]?.id;
     ui.projectId = state.active;
     ui.deviceId = project()?.devices[0]?.id || null;
+    if (window.DSTranslate) window.DSTranslate.setUser(readGloss());
     bind();
     render();
     setSave("saved", "Сохранено");

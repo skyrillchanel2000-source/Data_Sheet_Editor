@@ -3,13 +3,31 @@
 (function () {
   "use strict";
 
-  const DICT = (window.DSDICT && window.DSDICT.pairs) || {};
   const CYR_RE = /[А-Яа-яЁё]/;
   const PART_RE = /[А-Яа-яЁёA-Za-z0-9°№%]+(?:[.,][0-9]+)?|\s+|[^\sА-Яа-яЁёA-Za-z0-9]+/g;
   const hasLetters = (part) => /^[А-Яа-яЁёA-Za-z]/.test(part);
 
   function normKey(text) {
     return String(text == null ? "" : text).replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function normalizePairs(source) {
+    const out = {};
+    Object.keys(source || {}).forEach((ru) => {
+      const key = normKey(ru);
+      const value = String(source[ru] == null ? "" : source[ru]).replace(/\s+/g, " ").trim();
+      if (key && value) out[key] = value;
+    });
+    return out;
+  }
+
+  const BASE = normalizePairs(window.DSDICT && window.DSDICT.pairs);
+  let userPairs = {};
+  let DICT = Object.assign({}, BASE);
+
+  function setUser(source) {
+    userPairs = normalizePairs(source);
+    DICT = Object.assign({}, BASE, userPairs);
   }
 
   function translateLine(line, countMissing) {
@@ -57,7 +75,11 @@
   window.DSTranslate = {
     translate,
     phrase,
-    size: Object.keys(DICT).length,
-    source: (window.DSDICT && window.DSDICT.source) || ""
+    setUser,
+    user: () => Object.assign({}, userPairs),
+    base: () => BASE,
+    size: () => Object.keys(DICT).length,
+    source: (window.DSDICT && window.DSDICT.source) || "",
+    normKey
   };
 })();
