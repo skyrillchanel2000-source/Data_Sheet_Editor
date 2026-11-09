@@ -104,6 +104,59 @@
 
   window.DS = { measure: textLines };
 
+  /* ---------------- figure sizing ---------------- */
+
+  const FIG_MAX_W = 620;
+  const ROW_PX = 21;
+
+  function imageSize(dataUrl) {
+    const url = String(dataUrl || "");
+    if (!/^data:image\//i.test(url)) return null;
+    try {
+      const bin = atob(url.split(",")[1] || "");
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+      if (/^data:image\/png/i.test(url) && bytes[0] === 0x89) {
+        return {
+          w: (bytes[16] << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19],
+          h: (bytes[20] << 24) | (bytes[21] << 16) | (bytes[22] << 8) | bytes[23]
+        };
+      }
+      if (bytes[0] === 0xff && bytes[1] === 0xd8) {
+        let i = 2;
+        while (i < bytes.length - 9) {
+          if (bytes[i] !== 0xff) { i += 1; continue; }
+          const marker = bytes[i + 1];
+          const len = (bytes[i + 2] << 8) | bytes[i + 3];
+          if (marker >= 0xc0 && marker <= 0xc3) {
+            return { w: (bytes[i + 7] << 8) | bytes[i + 8], h: (bytes[i + 5] << 8) | bytes[i + 6] };
+          }
+          i += 2 + len;
+        }
+      }
+    } catch (err) { /* ignore */ }
+    return null;
+  }
+
+  function autoFigureRows(fig) {
+    const size = imageSize(fig && fig.image);
+    if (!size || !size.w || !size.h) return 0;
+    const w = Math.min(size.w, FIG_MAX_W);
+    return Math.max(2, Math.ceil((size.h * w / size.w) / ROW_PX) + 1);
+  }
+
+  function fitFigure(fig) {
+    const rows = autoFigureRows(fig);
+    if (rows) fig.cellRows = rows;
+    return rows;
+  }
+
+  function noteRowsFor(fig) {
+    const text = String(fig.noteRu || "").trim() || String(fig.noteEn || "").trim();
+    if (!text) return 0;
+    return Math.max(1, textLines(text, 615));
+  }
+
   /* ---------------- storage ---------------- */
 
   function newCell(span = 1) {
@@ -176,17 +229,22 @@
       return row;
     });
     fixAbsentCells(device.rows);
-    device.figures = device.figures.map((f) => ({
-      id: f.id || uid("f"),
-      image: f.image || "",
-      noteRu: f.noteRu || "",
-      noteEn: f.noteEn || "",
-      noteRows: Math.max(0, num(f.noteRows, 0)),
-      cellRows: Math.max(0, num(f.cellRows, 0)),
-      captionRu: f.captionRu || "",
-      captionEn: f.captionEn || "",
-      geom: f.geom && typeof f.geom === "object" ? { ...f.geom } : {}
-    }));
+    device.figures = device.figures.map((f) => {
+      const fig = {
+        id: f.id || uid("f"),
+        image: f.image || "",
+        noteRu: f.noteRu || "",
+        noteEn: f.noteEn || "",
+        noteRows: Math.max(0, num(f.noteRows, 0)),
+        cellRows: Math.max(0, num(f.cellRows, 0)),
+        captionRu: f.captionRu || "",
+        captionEn: f.captionEn || "",
+        geom: f.geom && typeof f.geom === "object" ? { ...f.geom } : {}
+      };
+      if (fig.image && !fig.cellRows) fig.cellRows = autoFigureRows(fig);
+      if (!fig.noteRows && String(fig.noteRu + fig.noteEn).trim()) fig.noteRows = noteRowsFor(fig);
+      return fig;
+    });
     device.markings = device.markings.map((m) => ({
       id: m.id || uid("m"),
       code: String(m.code || "").replace(/^\d+\s+(?=[А-ЯЁA-Z])/, ""),
@@ -1189,13 +1247,16 @@
             <label class="field"><span>Caption (EN)</span><input value="${esc(f.captionEn)}" data-fig="${f.id}" data-field="captionEn" placeholder="Figure 1 - The appearance of the sensor"></label>
             <label class="field"><span>Подводка (RU)</span><input value="${esc(f.noteRu)}" data-fig="${f.id}" data-field="noteRu" placeholder="Внешний вид датчика … представлен на рисунке 1."></label>
             <label class="field"><span>Note (EN)</span><input value="${esc(f.noteEn)}" data-fig="${f.id}" data-field="noteEn" placeholder="The appearance of the sensor is shown in Figure 1."></label>
+            <label class="field"><span>Строк под рисунок</span><input type="number" min="0" max="56" step="1" value="${f.cellRows || 0}" data-fig="${f.id}" data-field="cellRows" data-num="1" placeholder="авто"></label>
+            <label class="field"><span>Строк подводки</span><input type="number" min="0" max="20" step="1" value="${f.noteRows || 0}" data-fig="${f.id}" data-field="noteRows" data-num="1"></label>
           </div>
+          <button class="btn btn-sm btn-soft" data-act="fit-fig" data-id="${f.id}">Подогнать по рисунку</button>
           <button class="icon-btn danger" data-act="del-fig" data-id="${f.id}" aria-label="Удалить рисунок">✕</button>
         </article>`).join("")
       : '<div class="empty-soft">Рисунков нет. Добавьте габаритный чертёж или внешний вид прибора — он встанет под таблицей.</div>';
     return `<section class="card">
       <div class="card-head">
-        <div><h2>Рисунки</h2><p>В Excel рисунок центрируется в объединённой ячейке, пропорции сохраняются.</p></div>
+        <div><h2>Рисунки</h2><p>Строки под рисунок считаются по его размеру автоматически; число строк можно поправить вручную.</p></div>
         <button class="btn btn-sm btn-soft" data-act="add-fig">+ рисунок</button>
       </div>
       <div class="card-body"><div class="figure-list">${cards}</div></div>
@@ -1223,7 +1284,7 @@
   const REF_LOCKED_ACTS = new Set([
     "dup-sheet", "del-sheet", "add-kit", "del-kit", "row-cols", "merge-at",
     "add-row", "del-row", "row-up", "row-down",
-    "add-fig", "del-fig", "pick-image", "add-mark", "del-mark", "add-group", "del-group",
+    "add-fig", "del-fig", "pick-image", "fit-fig", "add-mark", "del-mark", "add-group", "del-group",
     "add-tag", "del-tag", "paste-tags", "translate-page"
   ]);
 
@@ -1721,7 +1782,19 @@
 
   function addFigure() {
     const d = sheet();
-    const fig = { id: uid("f"), image: "", noteRu: "", noteEn: "", captionRu: `Рисунок ${d.figures.length + 1} - Внешний вид ${d.titleRu}`, captionEn: `Figure ${d.figures.length + 1} - The appearance of ${d.titleEn || d.titleRu}` };
+    const n = d.figures.length + 1;
+    const titleRu = d.titleRu || d.nameRu || "прибора";
+    const titleEn = d.titleEn || d.titleRu || "the device";
+    const fig = {
+      id: uid("f"),
+      image: "",
+      noteRu: `Внешний вид ${titleRu} представлен на рисунке ${n}.`,
+      noteEn: `The appearance of ${titleEn} is shown in Figure ${n}.`,
+      noteRows: 1,
+      cellRows: 0,
+      captionRu: `Рисунок ${n} - Внешний вид ${titleRu}`,
+      captionEn: `Figure ${n} - The appearance of ${titleEn}`
+    };
     d.figures.push(fig);
     touch();
     render();
@@ -1743,6 +1816,7 @@
       const fig = d && d.figures.find((f) => f.id === imageTarget);
       if (!fig) return;
       fig.image = reader.result;
+      if (!fig.cellRows) fig.cellRows = autoFigureRows(fig);
       touch();
       render();
     };
@@ -2189,6 +2263,12 @@
         touch(); render(); return;
       }
       if (act === "pick-image") { pickImage(el.dataset.id); return; }
+      if (act === "fit-fig") {
+        const d = sheet();
+        const f = d && d.figures.find((x) => x.id === el.dataset.id);
+        if (f) { fitFigure(f); touch(); render(); }
+        return;
+      }
       if (act === "add-mark") { addMark(); return; }
       if (act === "del-mark") {
         const d = sheet();
@@ -2266,7 +2346,16 @@
         const f = d.figures.find((x) => x.id === el.dataset.fig);
         if (f) {
           const field = el.dataset.field;
-          f[field] = el.value;
+          if (el.dataset.num) {
+            const n = Number.parseInt(el.value, 10);
+            f[field] = Number.isFinite(n) ? Math.max(0, n) : 0;
+          } else {
+            f[field] = el.value;
+          }
+          if (field === "noteRu" || field === "noteEn") {
+            const rows = noteRowsFor(f);
+            if (rows && (f.noteRows || 0) <= 1) f.noteRows = rows;
+          }
           const dst = { captionRu: "captionEn", noteRu: "noteEn" }[field];
           if (dst && syncOn) {
             f[dst] = toEnglish(el.value);

@@ -10,6 +10,16 @@
   const PX_PER_ROW = 21;
   const EMU = 9525;
   const AREA_W = 627;
+  const FIG_MAX_W = 620;
+  const FIG_FALLBACK_ROWS = 3;
+
+  /* Сколько строк нужно рисунку: ширина не больше FIG_MAX_W, пропорции
+     сохраняются, снизу остаётся одна строка запаса под подпись. */
+  function autoFigureRows(size) {
+    if (!size || !size.w || !size.h) return 0;
+    const w = Math.min(size.w, FIG_MAX_W);
+    return Math.max(2, Math.ceil((size.h * w / size.w) / PX_PER_ROW) + 1);
+  }
 
   const S = {
     text: 1,
@@ -418,26 +428,36 @@
       const figs = page.figures || [];
       if (figs.length) {
         if (kind !== "figs") row += 1;
+        const lastRow = top + FRAME_ROWS - 1;
         figs.forEach((fig) => {
           const note = this.pick(fig.noteRu, fig.noteEn);
-          const noteRows = Math.max(0, Number(fig.noteRows) || 0);
-          if (note.trim() && noteRows) {
+          const noteText = note.trim();
+          let noteRows = Math.max(0, Number(fig.noteRows) || 0);
+          if (noteText && !noteRows) noteRows = Math.max(1, textLines(note, AREA_W - 12));
+          if (noteText && noteRows) {
             doc.merge(row, COLS.F, row + noteRows - 1, COLS.X, indent(note), S.text);
           }
           row += noteRows;
 
-          const cellRows = Math.max(1, Number(fig.cellRows) || 1);
+          const natural = fig.image ? imageInfo(fig.image) : null;
+          let cellRows = Math.max(0, Number(fig.cellRows) || 0);
+          if (!cellRows) cellRows = natural ? autoFigureRows(natural) : FIG_FALLBACK_ROWS;
+
+          const cap = this.pick(fig.captionRu, fig.captionEn).trim();
+          const room = lastRow - row - (cap ? 1 : 0);
+          if (room >= 2 && cellRows > room) cellRows = room;
+          cellRows = Math.max(1, cellRows);
+
           doc.merge(row, COLS.F, row + cellRows - 1, COLS.X, "", S.center);
           const geom = fig.geom || {};
           if (fig.image) {
-            const natural = imageInfo(fig.image);
             const blockH = cellRows * PX_PER_ROW;
             const maxH = Math.max(PX_PER_ROW, blockH - PX_PER_ROW);
-            let w = Math.min(natural.w || 500, 620);
-            let h = (natural.h || 350) * (w / (natural.w || 500));
+            let w = Math.min((natural && natural.w) || 500, FIG_MAX_W);
+            let h = ((natural && natural.h) || 350) * (w / ((natural && natural.w) || 500));
             if (h > maxH) {
               h = maxH;
-              w = (natural.w || 500) * (h / (natural.h || 350));
+              w = ((natural && natural.w) || 500) * (h / ((natural && natural.h) || 350));
             }
             const xoffPx = Math.max(0, (AREA_W - w) / 2);
             doc.addImage({
@@ -454,9 +474,8 @@
           }
           row += cellRows;
 
-          const cap = this.pick(fig.captionRu, fig.captionEn);
-          if (cap.trim()) {
-            doc.merge(row, COLS.F, row, COLS.X, cap.trim(), S.center);
+          if (cap) {
+            doc.merge(row, COLS.F, row, COLS.X, cap, S.center);
             doc.rows.set(row, 16.5);
             row += 1;
           }
