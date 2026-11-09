@@ -1026,11 +1026,16 @@
   }
 
   function kitBar(d) {
+    const clip = readKitClip();
+    const isKit = Boolean(ui.kitId);
+    const clipName = clip ? (clip.titleRu || "без названия") : "";
     return `<div class="kit-bar">
       <span class="kit-label">Лист:</span>
       <button class="kit-tab${ui.kitId ? "" : " active"}" data-act="kit" data-id="">Прибор</button>
       ${(d.kits || []).map((k) => `<button class="kit-tab${ui.kitId === k.id ? " active" : ""}" data-act="kit" data-id="${k.id}">${esc(k.titleRu || "Комплект")}</button>`).join("")}
       <button class="kit-add" data-act="add-kit">+ комплект</button>
+      <button class="kit-add" data-act="copy-kit" title="${isKit ? "Скопировать этот комплект в буфер" : "Скопировать лист прибора как комплект"}">${isKit ? "Скопировать комплект" : "Скопировать как комплект"}</button>
+      <button class="kit-add" data-act="paste-kit"${clip ? "" : " disabled"} title="${clip ? `Вставить комплект «${esc(clipName)}»` : "Буфер комплекта пуст"}">Вставить комплект</button>
     </div>`;
   }
 
@@ -1282,7 +1287,7 @@
   /* ---------------- reference lock ---------------- */
 
   const REF_LOCKED_ACTS = new Set([
-    "dup-sheet", "del-sheet", "add-kit", "del-kit", "row-cols", "merge-at",
+    "dup-sheet", "del-sheet", "add-kit", "del-kit", "paste-kit", "row-cols", "merge-at",
     "add-row", "del-row", "row-up", "row-down",
     "add-fig", "del-fig", "pick-image", "fit-fig", "add-mark", "del-mark", "add-group", "del-group",
     "add-tag", "del-tag", "paste-tags", "translate-page"
@@ -1837,6 +1842,79 @@
     render();
   }
 
+  const KIT_CLIP_KEY = "ds-editor-kit-clip-v1";
+
+  function readKitClip() {
+    try {
+      const data = JSON.parse(localStorage.getItem(KIT_CLIP_KEY) || "null");
+      return data && typeof data === "object" ? data : null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function writeKitClip(data) {
+    try {
+      localStorage.setItem(KIT_CLIP_KEY, JSON.stringify(data));
+    } catch (err) { /* ignore */ }
+  }
+
+  function kitFromSheet() {
+    const d = device();
+    const s = sheet();
+    const src = s && s !== d ? s : d;
+    return normalizeDevice(clone({
+      titleRu: src.titleRu || d.titleRu || "Комплект",
+      titleEn: src.titleEn || d.titleEn || "",
+      kind: "kit",
+      introRu: src.introRu || "",
+      introEn: src.introEn || "",
+      nameRu: src.nameRu || "",
+      nameEn: src.nameEn || "",
+      columns: src.columns,
+      rows: src.rows,
+      figures: src.figures
+    }), 0);
+  }
+
+  function copyKit() {
+    const d = device();
+    const s = sheet();
+    const kit = kitFromSheet();
+    delete kit.no;
+    delete kit.suffix;
+    delete kit.kits;
+    delete kit.pages;
+    writeKitClip(kit);
+    toast(s !== d
+      ? `Комплект «${s.titleRu || "без названия"}» скопирован`
+      : `Лист «${d.titleRu || "без названия"}» скопирован как комплект`);
+  }
+
+  function pasteKit() {
+    if (!requireRefEdit("вставить комплект")) return;
+    const data = readKitClip();
+    if (!data) { toast("Буфер комплекта пуст — сначала нажмите «Скопировать»", true); return; }
+    const d = device();
+    const kit = normalizeDevice(clone(data), 0);
+    delete kit.no;
+    delete kit.suffix;
+    delete kit.kits;
+    delete kit.pages;
+    kit.markings = [];
+    kit.tagGroups = [];
+    kit.id = uid("kit");
+    reidDevice(kit, true);
+    if (!Array.isArray(d.kits)) d.kits = [];
+    d.kits.push(kit);
+    ui.kitId = kit.id;
+    ui.rowId = null;
+    ui.cellId = null;
+    touch();
+    render();
+    toast(`Комплект «${kit.titleRu || "без названия"}» добавлен в лист №${numberOf(d)}`);
+  }
+
   function addKit() {
     const d = device();
     const kit = normalizeDevice({
@@ -2243,6 +2321,8 @@
       if (act === "gloss-del") { deleteGlossPair(el.dataset.ru); return; }
       if (act === "kit") { ui.kitId = el.dataset.id || null; ui.rowId = null; ui.cellId = null; render(); return; }
       if (act === "add-kit") { addKit(); return; }
+      if (act === "copy-kit") { copyKit(); return; }
+      if (act === "paste-kit") { pasteKit(); return; }
       if (act === "del-kit") { delKit(); return; }
       if (act === "add-row") { addRow(ui.rowId); return; }
       if (act === "del-row") { deleteRow(); return; }
