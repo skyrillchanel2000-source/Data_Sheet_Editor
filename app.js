@@ -955,6 +955,7 @@
       ${translateBarHTML()}
       ${bodyHTML(item, d, lang, isKit)}
     `;
+    renderMissing();
   }
 
   function translateHint() {
@@ -977,6 +978,7 @@
         <span class="switch-text">Синхронизация</span>
       </label>
       <span class="tr-hint" id="tr-hint">${esc(translateHint())}</span>
+      <span class="tr-missing" id="tr-missing"></span>
       <button class="btn btn-sm btn-soft" data-act="glossary" title="Что на что переводится, и свои пары">Глоссарий</button>
       <button class="btn btn-sm btn-soft" data-act="translate-page" title="Перевести русский текст листа в английский по словарю">Перевести страницу</button>
     </div>`;
@@ -1342,6 +1344,33 @@
 
   const EN_FIELD = { titleRu: "titleEn", scopeRu: "scopeEn", introRu: "introEn", nameRu: "nameEn" };
 
+  /* Слова, которые автоперевод не смог перевести: показываются в панели
+     перевода, по клику из них собирается своя пара в глоссарии. */
+  let missingWords = [];
+
+  function noteMissing(words) {
+    if (!words || !words.length) return;
+    const known = new Set(missingWords.map((w) => w.toLowerCase()));
+    words.forEach((word) => {
+      const key = String(word).toLowerCase();
+      if (!key || known.has(key)) return;
+      known.add(key);
+      missingWords.push(String(word));
+    });
+    missingWords = missingWords.slice(0, 10);
+    renderMissing();
+  }
+
+  function renderMissing() {
+    const host = $("#tr-missing");
+    if (!host) return;
+    if (!missingWords.length) { host.innerHTML = ""; return; }
+    const chips = missingWords
+      .map((word) => `<button class="tr-missing-chip" data-act="gloss-learn" data-ru="${esc(word)}" title="Добавить пару в глоссарий: ${esc(word)} → …">${esc(word)}</button>`)
+      .join("");
+    host.innerHTML = `<span class="tr-missing-label">Нет перевода:</span>${chips}<button class="tr-missing-clear" data-act="gloss-clear" title="Скрыть подсказку" aria-label="Скрыть">✕</button>`;
+  }
+
   function toEnglish(value) {
     return autoOn ? translateRu(value).text : value;
   }
@@ -1350,7 +1379,9 @@
     if (!syncOn) return;
     const dst = EN_FIELD[key];
     if (!dst) return;
-    const text = toEnglish(value);
+    const tr = autoOn ? translateRu(value) : { text: value, words: [] };
+    const text = tr.text;
+    if (autoOn) noteMissing(tr.words);
     if (d[dst] === text) return;
     d[dst] = text;
     const input = $(`[data-model="${dst}"]`, $("#editor"));
@@ -1377,16 +1408,20 @@
     if (el.dataset.edit === "label") {
       row[ru ? "labelRu" : "labelEn"] = value;
       if (ru && syncOn) {
-        row.labelEn = toEnglish(value);
+        const tr = autoOn ? translateRu(value) : { text: value, words: [] };
+        row.labelEn = tr.text;
         syncTableText("label", row.id, row.labelEn);
+        if (autoOn) noteMissing(tr.words);
       }
     } else {
       const cell = row.cells.find((c) => c.id === el.dataset.c);
       if (cell) {
         cell[ru ? "ru" : "en"] = value;
         if (ru && syncOn) {
-          cell.en = toEnglish(value);
+          const tr = autoOn ? translateRu(value) : { text: value, words: [] };
+          cell.en = tr.text;
           syncTableText("cell", cell.id, cell.en);
+          if (autoOn) noteMissing(tr.words);
         }
       }
     }
@@ -1435,6 +1470,7 @@
       if (!ok) return;
     }
     results.forEach((r) => r.set(r.translated.text));
+    noteMissing(results.reduce((acc, r) => acc.concat(r.translated.words || []), []));
     touch();
     render();
     toast(`Переведено: ${changed} полей${missing ? `, без перевода слов — ${missing}` : ""}`);
@@ -1512,7 +1548,7 @@
       : '<div class="empty-list">Ничего не найдено — добавьте свою пару в полях выше.</div>';
   }
 
-  function openGlossary() {
+  function openGlossary(prefillRu) {
     const error = $("#gloss-error");
     if (error) error.hidden = true;
     const search = $("#gloss-search");
@@ -1522,6 +1558,13 @@
     if (dlg && typeof dlg.showModal === "function") dlg.showModal();
     else if (dlg) dlg.setAttribute("open", "");
     const ru = $("#gloss-ru");
+    const en = $("#gloss-en");
+    if (prefillRu && ru) {
+      ru.value = String(prefillRu);
+      if (en) en.value = "";
+      if (en) setTimeout(() => en.focus(), 30);
+      return;
+    }
     if (ru) setTimeout(() => ru.focus(), 30);
   }
 
@@ -1551,6 +1594,8 @@
     glossError("");
     ruEl.value = "";
     enEl.value = "";
+    missingWords = missingWords.filter((word) => glossKey(word) !== glossKey(ru));
+    renderMissing();
     renderGlossList();
     toast(`Своя пара добавлена: ${ru} → ${en}`);
     ruEl.focus();
@@ -2318,6 +2363,8 @@
       if (act === "ref-open") { openRef(); return; }
       if (act === "translate-page") { translatePage(); return; }
       if (act === "glossary") { openGlossary(); return; }
+      if (act === "gloss-learn") { openGlossary(el.dataset.ru); return; }
+      if (act === "gloss-clear") { missingWords = []; renderMissing(); return; }
       if (act === "gloss-del") { deleteGlossPair(el.dataset.ru); return; }
       if (act === "kit") { ui.kitId = el.dataset.id || null; ui.rowId = null; ui.cellId = null; render(); return; }
       if (act === "add-kit") { addKit(); return; }
