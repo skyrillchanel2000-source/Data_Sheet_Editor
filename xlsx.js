@@ -10,8 +10,11 @@
   const PX_PER_ROW = 21;
   const EMU = 9525;
   const AREA_W = 627;
+  const COL_PX = AREA_W / 19;
   const FIG_MAX_W = 620;
   const FIG_FALLBACK_ROWS = 3;
+  const FIG_LEAD = 4; /* с какой строки страницы начинается продолжение с рисунками */
+  const FIG_MAX_TRIM = 3; /* на сколько строк ещё можно ужать рисунок, прежде чем перенести блок */
 
   /* Сколько строк нужно рисунку: ширина не больше FIG_MAX_W, пропорции
      сохраняются, снизу остаётся одна строка запаса под подпись. */
@@ -83,7 +86,9 @@
     return out;
   }
 
-  function imageInfo(dataUrl) {
+  const IMG_CACHE = new Map();
+
+  function decodeImage(dataUrl) {
     const bytes = b64ToBytes(dataUrl);
     const type = /^data:image\/png/i.test(dataUrl) ? "png" : "jpeg";
     let w = 500;
@@ -108,6 +113,18 @@
       }
     } catch (err) { /* ignore */ }
     return { bytes, type, w, h };
+  }
+
+  /* Размеры одного и того же рисунка нужны и при раскладке, и при выгрузке —
+     base64 разбираем один раз. */
+  function imageInfo(dataUrl) {
+    const key = typeof dataUrl === "string" ? dataUrl : "";
+    if (!key) return null;
+    const cached = IMG_CACHE.get(key);
+    if (cached) return cached;
+    const info = decodeImage(key);
+    IMG_CACHE.set(key, info);
+    return info;
   }
 
   /* ---------------- zip ---------------- */
@@ -320,14 +337,16 @@
   }
 
   class SheetPage {
-    constructor(doc, device, page, lang, num) {
+    constructor(doc, device, page, lang, num, count) {
       this.doc = doc;
       this.device = device;
       this.page = page || {};
       this.lang = lang;
       this.num = num;
+      this.count = Math.max(0, Number(count) || 0);
       this.ru = lang === "ru";
       this.pages = [];
+      this._spans = null;
     }
 
     pick(ru, en) {
@@ -335,154 +354,285 @@
       return EMPTY_TEXT(value);
     }
 
-    render() {
-      const doc = this.doc;
+    columns() {
+      return Math.max(1, (this.page.columns || []).length || Number(this.page._ncols) || 1);
+    }
+
+    /* Высота строки таблицы: не ниже rowSpan из данных и не ниже, чем нужно
+       тексту. Подпись и значения меряются по фактической ширине объединения,
+       поэтому длинная строка сама занимает две и больше строк. */
+    rowSpanOf(item, cols) {
+      const lines = [];
+      const label = this.pick(item.labelRu, item.labelEn).trim();
+      const sub = this.pick(item.subRu, item.subEn).trim();
+      if (sub) {
+        const labelW = (item.labelMerge !== false ? COL_PX * 7 : COL_PX) - 8;
+        lines.push(textLines(label, labelW));
+        lines.push(textLines(sub, COL_PX * 6 - 8));
+      } else if (label) {
+        lines.push(textLines(label, COL_PX * 7 - 8));
+      }
+      (item.cells || []).forEach((cell) => {
+        const span = Math.max(1, Number(cell.span) || 1);
+        lines.push(textLines(this.pick(cell.ru, cell.en).trim(), (AREA_W * span / cols) - 8));
+      });
+      const need = lines.length ? Math.max.apply(null, lines) : 1;
+      return Math.max(Math.max(1, Number(item.rowSpan) || 1), need);
+    }
+
+    spansFor() {
+      if (!this._spans) {
+        const cols = this.columns();
+        this._spans = (this.page.rows || []).map((item) => this.rowSpanOf(item, cols));
+      }
+      return this._spans;
+    }
+
+    /* Подпись таблицы: своя из данных или собранная по типу листа. */
+    tableName(kind) {
+      const own = this.pick(this.page.nameRu, this.page.nameEn);
+      if (own.trim()) return own;
+      const title = this.pick(this.page.titleRu, this.page.titleEn).trim();
+      if (kind === "kit") {
+        return this.ru ? "Таблица 1 – Технические характеристики гильзы" : "Table 1 - Technical characteristics of the protective sleeve";
+      }
+      return this.ru
+        ? `Таблица 1 – Технические характеристики датчика ${title}`
+        : `Table 1 - Technical characteristics of the transmitter ${title}`;
+    }
+
+    /* Блок над таблицей и сама таблица: только смещения от верха страницы,
+       чтобы раскладку можно было посчитать без записи ячеек. */
+    headItems(kind) {
       const page = this.page;
-      const kind = page.kind || "main";
-      const top = doc.newPage();
-      this.pages.push(top);
-      if (this.num) {
-        doc.number(top, this.ru ? `Лист технических данных №${this.num}` : `Technical Data Sheet №${this.num}`);
+      const items = [];
+      let at = Number(page.lead) || 3;
+      const lead = at;
+      if (kind === "figs") return { items, end: at, lead };
+
+      const title = this.pick(page.titleRu, page.titleEn).trim();
+      let titleAt = 0;
+      if (title) {
+        titleAt = at;
+        items.push({ type: "title", text: title, at });
+        at += 1;
       }
 
-      const cols = Math.max(1, (page.columns || []).length || Number(page._ncols) || 1);
+      const scope = this.pick(page.scopeRu, page.scopeEn).trim();
+      if (scope) {
+        const prefix = this.ru ? "Область применения: " : "Application area: ";
+        items.push({ type: "scope", text: prefix + scope, at });
+        at += 2;
+      }
+
+      const intro = this.pick(page.introRu, page.introEn).trim();
+      if (intro) {
+        items.push({ type: "intro", text: intro, at });
+        at += 1;
+      }
+
+      const name = this.tableName(kind).trim();
+      if (name) {
+        items.push({ type: "name", text: name, at, titleAt });
+        at += 1;
+      }
+
+      const spans = this.spansFor();
+      const rows = page.rows || [];
+      if (rows.length) {
+        items.push({ type: "head", at });
+        at += 1;
+        rows.forEach((item, i) => {
+          items.push({ type: "row", item, span: spans[i], at });
+          at += spans[i];
+        });
+      }
+      return { items, end: at, lead };
+    }
+
+    /* Блоки рисунков: подводка, рисунок, подпись. */
+    figureBlocks() {
+      return (this.page.figures || []).map((fig) => {
+        const note = this.pick(fig.noteRu, fig.noteEn);
+        const noteText = note.trim();
+        let noteRows = Math.max(0, Number(fig.noteRows) || 0);
+        if (noteText && !noteRows) noteRows = Math.max(1, textLines(note, AREA_W - 12));
+        const natural = fig.image ? imageInfo(fig.image) : null;
+        let cellRows = Math.max(0, Number(fig.cellRows) || 0);
+        if (!cellRows) cellRows = natural ? autoFigureRows(natural) : FIG_FALLBACK_ROWS;
+        return {
+          fig,
+          note,
+          noteText,
+          noteRows,
+          cellRows,
+          cap: this.pick(fig.captionRu, fig.captionEn).trim(),
+          natural
+        };
+      });
+    }
+
+    /* Раскладка рисунков по страницам. Блок (подводка + рисунок + подпись)
+       не режется: если рисунку пришлось бы ужаться больше чем на FIG_MAX_TRIM
+       строк, блок целиком уходит на следующую страницу. Небольшая подрезка
+       остаётся — так свёрстан эталон «Все листы». */
+    paginate(headEnd, blocks, kind) {
+      const last = FRAME_ROWS - 1;
+      const lead = Number(this.page.lead) || 3;
+      const pages = [];
+      let cur = { blocks: [], filled: kind !== "figs" && headEnd > lead };
+      let at = headEnd + (kind !== "figs" ? 1 : 0);
+
+      const probe = (block, from) => {
+        const room = last - (from + block.noteRows) - (block.cap ? 1 : 0);
+        return { room, trim: block.cellRows - room };
+      };
+
+      blocks.forEach((block) => {
+        let fit = probe(block, at);
+        if (cur.filled && fit.trim > FIG_MAX_TRIM) {
+          pages.push(cur);
+          cur = { blocks: [], filled: false };
+          at = FIG_LEAD;
+          fit = probe(block, at);
+        }
+        const cellRows = Math.max(1, Math.min(block.cellRows, fit.room >= 1 ? fit.room : 1));
+        cur.blocks.push({ ...block, cellRows, at });
+        cur.filled = true;
+        at += block.noteRows + cellRows + (block.cap ? 1 : 0);
+      });
+
+      if (!pages.length || cur.blocks.length) pages.push(cur);
+      return pages;
+    }
+
+    /* Сколько физических страниц займёт лист (без записи в книгу). */
+    planCount() {
+      const kind = this.page.kind || "main";
+      const head = this.headItems(kind);
+      return this.paginate(head.end, this.figureBlocks(), kind).length;
+    }
+
+    drawHead(head, top) {
+      const doc = this.doc;
+      const cols = this.columns();
       const unit = 12 / cols;
-      let row = top + (Number(page.lead) || 3);
-
-      if (kind !== "figs") {
-        const titleRow = row;
-        const title = this.pick(page.titleRu, page.titleEn);
-        if (title.trim()) doc.merge(row, COLS.F, row, COLS.X, title.trim(), S.center);
-        row += 1;
-
-        const scope = this.pick(page.scopeRu, page.scopeEn);
-        if (scope.trim()) {
-          doc.merge(row, COLS.F, row + 1, COLS.X, indent((this.ru ? "Область применения: " : "Application area: ") + scope), S.text);
-          row += 2;
-        }
-
-        const intro = this.pick(page.introRu, page.introEn);
-        if (intro.trim()) {
-          doc.merge(row, COLS.F, row, COLS.X, indent(intro), S.leftLine);
-          row += 1;
-        }
-
-        let name = this.pick(page.nameRu, page.nameEn);
-        if (!name.trim()) {
-          const tableTitle = this.pick(page.titleRu, page.titleEn).trim();
-          name = kind === "kit"
-            ? (this.ru ? "Таблица 1 – Технические характеристики гильзы" : "Table 1 - Technical characteristics of the protective sleeve")
-            : (this.ru
-              ? `Таблица 1 – Технические характеристики датчика ${tableTitle}`
-              : `Table 1 - Technical characteristics of the transmitter ${tableTitle}`);
-        }
-        if (name.trim()) {
-          const titleText = this.pick(page.titleRu, page.titleEn).trim();
-          const tail = titleText && name.trim().endsWith(titleText) ? titleText : "";
+      head.items.forEach((it) => {
+        const row = top + it.at;
+        if (it.type === "title") {
+          doc.merge(row, COLS.F, row, COLS.X, it.text, S.center);
+        } else if (it.type === "scope") {
+          doc.merge(row, COLS.F, row + 1, COLS.X, indent(it.text), S.text);
+        } else if (it.type === "intro") {
+          doc.merge(row, COLS.F, row, COLS.X, indent(it.text), S.leftLine);
+        } else if (it.type === "name") {
+          const titleText = this.pick(this.page.titleRu, this.page.titleEn).trim();
+          const tail = titleText && it.text.endsWith(titleText) ? titleText : "";
           if (tail) {
-            const prefix = name.trim().slice(0, name.trim().length - tail.length);
+            const prefix = it.text.slice(0, it.text.length - tail.length);
             for (let c = COLS.F; c <= COLS.X; c += 1) doc.cell(row, c, "", S.leftLine);
             doc.merge(row, COLS.F, row, COLS.X, "", S.leftLine);
             const literal = `        ${prefix}`;
-            doc.formula(row, COLS.F, `"${literal.replace(/"/g, '""')}"&F${titleRow}`, indent(name), S.leftLine);
+            doc.formula(row, COLS.F, `"${literal.replace(/"/g, '""')}"&F${top + it.titleAt}`, indent(it.text), S.leftLine);
           } else {
-            doc.merge(row, COLS.F, row, COLS.X, indent(name), S.leftLine);
+            doc.merge(row, COLS.F, row, COLS.X, indent(it.text), S.leftLine);
           }
-          row += 1;
-        }
-
-        const rows = page.rows || [];
-        if (rows.length) {
+        } else if (it.type === "head") {
           for (let c = COLS.F; c <= COLS.X; c += 1) doc.cell(row, c, "", S.thinCenter);
           doc.merge(row, COLS.F, row, COLS.L, this.ru ? "Параметр" : "Parameter", S.thinCenter);
           doc.merge(row, COLS.M, row, COLS.X, this.ru ? "Значение" : "Value", S.thinCenter);
-          row += 1;
+        } else if (it.type === "row") {
+          this.drawRow(it, top, unit);
+        }
+      });
+    }
 
-          rows.forEach((item) => {
-            const span = Math.max(1, Number(item.rowSpan) || 1);
-            const end = row + span - 1;
-            for (let r = row; r <= end; r += 1) {
-              for (let c = COLS.F; c <= COLS.X; c += 1) doc.cell(r, c, "", S.thinCenter);
-            }
-            const label = this.pick(item.labelRu, item.labelEn).trim();
-            const sub = this.pick(item.subRu, item.subEn).trim();
-            if (sub) {
-              if (item.labelMerge !== false) doc.merge(row, COLS.F, end, COLS.F, label, S.thinLeft);
-              else doc.cell(row, COLS.F, label, S.thinLeft);
-              doc.merge(row, COLS.F + 1, end, COLS.L, sub, S.thinLeft);
-            } else {
-              doc.merge(row, COLS.F, end, COLS.L, label, S.thinLeft);
-            }
-            let at = 0;
-            (item.cells || []).forEach((cell) => {
-              const from = COLS.M + Math.round(at * unit);
-              at += Math.max(1, Number(cell.span) || 1);
-              const to = Math.min(COLS.X, COLS.M + Math.round(at * unit) - 1);
-              doc.merge(row, from, end, Math.max(from, to), this.pick(cell.ru, cell.en).trim(), S.thinCenter);
-            });
-            row = end + 1;
+    drawRow(it, top, unit) {
+      const doc = this.doc;
+      const item = it.item;
+      const row = top + it.at;
+      const end = row + it.span - 1;
+      for (let r = row; r <= end; r += 1) {
+        for (let c = COLS.F; c <= COLS.X; c += 1) doc.cell(r, c, "", S.thinCenter);
+      }
+      const label = this.pick(item.labelRu, item.labelEn).trim();
+      const sub = this.pick(item.subRu, item.subEn).trim();
+      if (sub) {
+        if (item.labelMerge !== false) doc.merge(row, COLS.F, end, COLS.F, label, S.thinLeft);
+        else doc.cell(row, COLS.F, label, S.thinLeft);
+        doc.merge(row, COLS.F + 1, end, COLS.L, sub, S.thinLeft);
+      } else {
+        doc.merge(row, COLS.F, end, COLS.L, label, S.thinLeft);
+      }
+      let at = 0;
+      (item.cells || []).forEach((cell) => {
+        const from = COLS.M + Math.round(at * unit);
+        at += Math.max(1, Number(cell.span) || 1);
+        const to = Math.min(COLS.X, COLS.M + Math.round(at * unit) - 1);
+        doc.merge(row, from, end, Math.max(from, to), this.pick(cell.ru, cell.en).trim(), S.thinCenter);
+      });
+    }
+
+    drawFigures(layout, top) {
+      const doc = this.doc;
+      (layout.blocks || []).forEach((item) => {
+        let row = top + item.at;
+        if (item.noteText && item.noteRows) {
+          doc.merge(row, COLS.F, row + item.noteRows - 1, COLS.X, indent(item.note), S.text);
+        }
+        row += item.noteRows;
+
+        doc.merge(row, COLS.F, row + item.cellRows - 1, COLS.X, "", S.center);
+        if (item.fig.image) {
+          const natural = item.natural;
+          const blockH = item.cellRows * PX_PER_ROW;
+          const maxH = Math.max(PX_PER_ROW, blockH - PX_PER_ROW);
+          let w = Math.min((natural && natural.w) || 500, FIG_MAX_W);
+          let h = ((natural && natural.h) || 350) * (w / ((natural && natural.w) || 500));
+          if (h > maxH) {
+            h = maxH;
+            w = ((natural && natural.w) || 500) * (h / ((natural && natural.h) || 350));
+          }
+          const xoffPx = Math.max(0, (AREA_W - w) / 2);
+          doc.addImage({
+            dataUrl: item.fig.image,
+            row,
+            col: COLS.F,
+            xoff: Math.round(xoffPx * EMU),
+            yoff: 0,
+            cx: Math.round(w * EMU),
+            cy: Math.round(h * EMU),
+            to: null,
+            rot: 0
           });
         }
+        row += item.cellRows;
+
+        if (item.cap) {
+          doc.merge(row, COLS.F, row, COLS.X, item.cap, S.center);
+          doc.rows.set(row, 16.5);
+        }
+      });
+    }
+
+    render() {
+      const doc = this.doc;
+      const kind = this.page.kind || "main";
+      const head = this.headItems(kind);
+      const plan = this.paginate(head.end, this.figureBlocks(), kind);
+      const total = Math.max(plan.length, this.count);
+
+      for (let i = 0; i < total; i += 1) {
+        const top = doc.newPage();
+        this.pages.push(top);
+        const num = typeof this.num === "function" ? this.num() : this.num;
+        if (num) {
+          doc.number(top, this.ru ? `Лист технических данных №${num}` : `Technical Data Sheet №${num}`);
+        }
+        if (i === 0) this.drawHead(head, top);
+        if (plan[i]) this.drawFigures(plan[i], top);
+        doc.protectFrame(top);
       }
-
-      const figs = page.figures || [];
-      if (figs.length) {
-        if (kind !== "figs") row += 1;
-        const lastRow = top + FRAME_ROWS - 1;
-        figs.forEach((fig) => {
-          const note = this.pick(fig.noteRu, fig.noteEn);
-          const noteText = note.trim();
-          let noteRows = Math.max(0, Number(fig.noteRows) || 0);
-          if (noteText && !noteRows) noteRows = Math.max(1, textLines(note, AREA_W - 12));
-          if (noteText && noteRows) {
-            doc.merge(row, COLS.F, row + noteRows - 1, COLS.X, indent(note), S.text);
-          }
-          row += noteRows;
-
-          const natural = fig.image ? imageInfo(fig.image) : null;
-          let cellRows = Math.max(0, Number(fig.cellRows) || 0);
-          if (!cellRows) cellRows = natural ? autoFigureRows(natural) : FIG_FALLBACK_ROWS;
-
-          const cap = this.pick(fig.captionRu, fig.captionEn).trim();
-          const room = lastRow - row - (cap ? 1 : 0);
-          if (room >= 2 && cellRows > room) cellRows = room;
-          cellRows = Math.max(1, cellRows);
-
-          doc.merge(row, COLS.F, row + cellRows - 1, COLS.X, "", S.center);
-          const geom = fig.geom || {};
-          if (fig.image) {
-            const blockH = cellRows * PX_PER_ROW;
-            const maxH = Math.max(PX_PER_ROW, blockH - PX_PER_ROW);
-            let w = Math.min((natural && natural.w) || 500, FIG_MAX_W);
-            let h = ((natural && natural.h) || 350) * (w / ((natural && natural.w) || 500));
-            if (h > maxH) {
-              h = maxH;
-              w = ((natural && natural.w) || 500) * (h / ((natural && natural.h) || 350));
-            }
-            const xoffPx = Math.max(0, (AREA_W - w) / 2);
-            doc.addImage({
-              dataUrl: fig.image,
-              row,
-              col: COLS.F,
-              xoff: Math.round(xoffPx * EMU),
-              yoff: 0,
-              cx: Math.round(w * EMU),
-              cy: Math.round(h * EMU),
-              to: null,
-              rot: 0
-            });
-          }
-          row += cellRows;
-
-          if (cap) {
-            doc.merge(row, COLS.F, row, COLS.X, cap, S.center);
-            doc.rows.set(row, 16.5);
-            row += 1;
-          }
-        });
-      }
-
-      doc.protectFrame(top);
       return this.pages;
     }
   }
@@ -746,12 +896,27 @@ ${doc.images.map(anchor).join("")}
         const extras = (device.kits && device.kits.length) ? device.kits : (device.pages || []).slice(1);
         const pages = [main].concat(extras);
 
-        const total = pages.length;
+        /* Сколько физических страниц займёт каждая логическая страница. Рисунок
+           целиком уходит на следующую страницу, поэтому число страниц зависит
+           от текста; в RU и EN оно берётся одинаковым — иначе не совпадут
+           номера листов. */
+        const counts = pages.map((page) => {
+          const ru = new SheetPage(null, device, page, "ru", null, 0).planCount();
+          const en = new SheetPage(null, device, page, "en", null, 0).planCount();
+          return Math.max(ru, en);
+        });
+        const total = counts.reduce((n, c) => n + c, 0) || 1;
+        const counter = () => {
+          let index = 0;
+          return () => pageNumber(base, total, index++);
+        };
+        const ruNum = counter();
+        const enNum = counter();
         pages.forEach((page, i) => {
-          new SheetPage(doc, device, page, "ru", pageNumber(base, total, i)).render();
+          new SheetPage(doc, device, page, "ru", ruNum, counts[i]).render();
         });
         pages.forEach((page, i) => {
-          new SheetPage(doc, device, page, "en", pageNumber(base, total, i)).render();
+          new SheetPage(doc, device, page, "en", enNum, counts[i]).render();
         });
         tagsPage(doc, device);
       });

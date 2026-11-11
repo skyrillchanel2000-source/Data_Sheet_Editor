@@ -1122,7 +1122,7 @@
       <button class="add-row" data-act="add-row">+ строка</button>
       <div class="table-foot">
         <span>${d.rows.length} строк · ${d.columns.length} колонок</span>
-        <span>Тонкие границы и объединения переносятся в Excel автоматически</span>
+        <span>Высота строк подбирается по тексту: не влезает в одну строку — займёт две</span>
       </div>
     </section>`;
   }
