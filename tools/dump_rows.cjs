@@ -49,13 +49,13 @@ seed.projects.forEach((project) => {
         const subRu = String(item.subRu || "").trim();
         const subEn = String(item.subEn || "").trim();
         if (subRu || subEn) {
-          push("label", labelRu, COL_PX, FONT.lines(labelRu, COL_PX * 1.02), tag);
-          push("label", labelEn, COL_PX, FONT.lines(labelEn, COL_PX * 1.02), tag);
-          push("sub", subRu, subW, FONT.lines(subRu, subW * 1.02), tag);
-          push("sub", subEn, subW, FONT.lines(subEn, subW * 1.02), tag);
+          push("label", labelRu, COL_PX, FONT.lines(labelRu, COL_PX), tag);
+          push("label", labelEn, COL_PX, FONT.lines(labelEn, COL_PX), tag);
+          push("sub", subRu, subW, FONT.lines(subRu, subW), tag);
+          push("sub", subEn, subW, FONT.lines(subEn, subW), tag);
         } else {
-          push("label", labelRu, labelW, FONT.lines(labelRu, labelW * 1.02), tag);
-          push("label", labelEn, labelW, FONT.lines(labelEn, labelW * 1.02), tag);
+          push("label", labelRu, labelW, FONT.lines(labelRu, labelW), tag);
+          push("label", labelEn, labelW, FONT.lines(labelEn, labelW), tag);
         }
         let at = 0;
         (item.cells || []).forEach((cell) => {
@@ -63,8 +63,8 @@ seed.projects.forEach((project) => {
           at += Math.max(1, Number(cell.span) || 1);
           const to = Math.round(at * unit);
           const width = Math.max(COL_PX, (to - from) * COL_PX);
-          push("value", cell.ru, width, FONT.lines(cell.ru, width * 1.02), tag);
-          push("value", cell.en, width, FONT.lines(cell.en, width * 1.02), tag);
+          push("value", cell.ru, width, FONT.lines(cell.ru, width), tag);
+          push("value", cell.en, width, FONT.lines(cell.en, width), tag);
         });
       });
     });

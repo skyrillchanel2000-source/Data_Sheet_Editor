@@ -28,44 +28,66 @@
     return total;
   }
 
-  /* Перенос по словам, как в Excel: пробел на месте переноса в строку не входит,
+  /* Перенос по словам, как в Excel: пробелы (в том числе красная строка из
+     восьми пробелов) занимают место в строке, пробел на месте переноса — нет,
      слово длиннее строки рвётся по символам. Пустой абзац — одна строка.
-     Допуск 2 %: Excel рисует текст чуть иначе (сглаживание, округление до
-     пикселя), проверено на живом Excel — строка, которая шире ячейки на 1,7 %,
-     у него ещё остаётся одной строкой. */
-  const TOLERANCE = 1.02;
+
+     Допуска нет (было 2 %): он разрешал строке быть шире ячейки, и Excel,
+     который меряет текст чуть иначе, переносил её позже — на листе строка
+     вылезала за границу и «не влезала». Теперь строка обязана влезть в ширину
+     ячейки, поэтому такие места получают лишнюю строку высоты. */
+  const TOLERANCE = 1;
   function wrapLines(text, widthPx) {
     const width = Math.max(8, Number(widthPx) || 8) * TOLERANCE;
     const value = String(text == null ? "" : text).replace(/\r/g, "");
     let total = 0;
     value.split("\n").forEach((paragraph) => {
-      const words = paragraph.replace(/[\t\u00a0]/g, " ").split(/ +/).filter(Boolean);
-      if (!words.length) { total += 1; return; }
       let lines = 1;
-      let used = 0;
-      words.forEach((word) => {
-        let w = measure(word);
-        if (used && used + SPACE + w <= width) {
-          used += SPACE + w;
+      let used = 0;    // занято на текущей строке
+      let spaces = 0;  // пробелы после последнего слова
+      let word = "";
+
+      /* Поставить слово: если не влезает — перенос перед ним, пробелы на
+         месте переноса не учитываются; слово шире строки рвётся по символам.
+         Если на строке пока ничего нет (первое слово и без отступа), строка
+         не тратится: слово начинает её и рвётся по символам. */
+      const put = (text) => {
+        let rest = text;
+        let w = measure(rest);
+        if (used + spaces + w <= width) {
+          used += spaces + w;
+          spaces = 0;
           return;
         }
-        if (used) { lines += 1; used = 0; }
+        if (used || spaces) lines += 1;
+        used = 0;
+        spaces = 0;
         while (w > width) {
           let cut = 0;
           let acc = 0;
-          for (const ch of word) {
+          for (const ch of rest) {
             const cw = charWidth(ch);
             if (acc + cw > width) break;
             acc += cw;
             cut += ch.length;
           }
           if (!cut) break;
-          word = word.slice(cut);
-          w = measure(word);
-          if (word) lines += 1;
+          rest = rest.slice(cut);
+          w = measure(rest);
+          if (rest) { lines += 1; used = 0; }
         }
         used = w;
-      });
+      };
+
+      for (const ch of paragraph) {
+        if (ch === " " || ch === "\t" || ch === "\u00a0") {
+          if (word) { put(word); word = ""; }
+          spaces += SPACE;
+        } else {
+          word += ch;
+        }
+      }
+      if (word) put(word);
       total += lines;
     });
     return Math.max(1, total);
