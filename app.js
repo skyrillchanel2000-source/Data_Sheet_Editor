@@ -73,7 +73,13 @@
   const measureCtx = measureCanvas.getContext("2d");
   measureCtx.font = '16px "Times New Roman"';
 
+  /* Число строк текста в ячейке шириной widthPx. Считаем по таблице ширин
+     Times New Roman 12 pt из metrics.js — так же, как при выгрузке в Excel,
+     поэтому в браузере и в книге строка получает одинаковую высоту. */
   function textLines(text, widthPx) {
+    if (window.DSFont && typeof window.DSFont.lines === "function") {
+      return window.DSFont.lines(text, widthPx);
+    }
     const value = String(text == null ? "" : text);
     const width = Math.max(12, widthPx);
     let total = 0;
@@ -151,10 +157,12 @@
     return rows;
   }
 
+  /* Строки подводки к рисунку: та же ширина и тот же отступ, что в выгрузке
+     (ячейка F:X = 627 px, текст с отступом в 8 пробелов). */
   function noteRowsFor(fig) {
     const text = String(fig.noteRu || "").trim() || String(fig.noteEn || "").trim();
     if (!text) return 0;
-    return Math.max(1, textLines(text, 615));
+    return Math.max(1, textLines(`        ${text}`, 627));
   }
 
   /* ---------------- storage ---------------- */
@@ -1122,7 +1130,7 @@
       <button class="add-row" data-act="add-row">+ строка</button>
       <div class="table-foot">
         <span>${d.rows.length} строк · ${d.columns.length} колонок</span>
-        <span>Высота строк подбирается по тексту: не влезает в одну строку — займёт две</span>
+        <span>Высота строки считается по тексту: не влезает в одну строку — займёт две и больше</span>
       </div>
     </section>`;
   }

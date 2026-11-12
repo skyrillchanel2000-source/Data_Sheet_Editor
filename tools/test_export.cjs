@@ -9,14 +9,7 @@ global.Blob = class Blob {
 
 const base = path.resolve(__dirname, "..");
 require(path.join(base, "seed.js"));
-
-window.DS = {
-  measure(text, width) {
-    const value = String(text == null ? "" : text);
-    return Math.max(1, value.split("\n").reduce((n, p) => n + Math.max(1, Math.ceil(p.length / Math.max(8, width / 7.2))), 0));
-  }
-};
-
+require(path.join(base, "metrics.js"));
 require(path.join(base, "xlsx.js"));
 
 const state = JSON.parse(JSON.stringify(window.DS_SEED));

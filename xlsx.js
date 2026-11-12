@@ -70,10 +70,15 @@
   const clean = (v) => String(v == null ? "" : v).replace(/\u00a0/g, " ").trim();
   const indent = (v) => `        ${clean(v)}`;
 
+  /* Сколько строк займёт текст в ячейке шириной width px. Ширины символов
+     Times New Roman 12 pt лежат в metrics.js: один и тот же расчёт идёт в
+     браузере, в выгрузке и в проверках, поэтому высота строки не зависит от
+     того, где открыт лист. */
   function textLines(text, width) {
-    if (typeof window !== "undefined" && window.DS && typeof window.DS.measure === "function") {
-      return window.DS.measure(text, width);
-    }
+    const font = (typeof window !== "undefined" && window.DSFont)
+      || (typeof globalThis !== "undefined" && globalThis.DSFont)
+      || null;
+    if (font && typeof font.lines === "function") return font.lines(text, width);
     const value = String(text == null ? "" : text);
     return Math.max(1, value.split("\n").reduce((n, p) => n + Math.max(1, Math.ceil(p.length / Math.max(8, width / 7.2))), 0));
   }
@@ -336,6 +341,34 @@
     return total <= 1 ? value : `${value}.${index + 1}`;
   }
 
+  /* Сколько строк нужно строке таблицы. Меряем подпись по её объединению
+     (F:L, а при подписи с продолжением — F и G:L) и каждое значение по ширине
+     своей части M:X. Ширины точные, без вычета отступов: Excel считает
+     перенос по полной ширине ячейки. rowSpan из данных высоту не задаёт —
+     минимум можно поднять только полем minRows. */
+  function autoRowSpan(item, cols, ru) {
+    const unit = 12 / Math.max(1, cols);
+    const pick = (a, b) => {
+      const first = EMPTY_TEXT(a);
+      const second = EMPTY_TEXT(b);
+      return ru ? first : (second.trim() ? second : first);
+    };
+    const label = pick(item.labelRu, item.labelEn).trim();
+    const sub = pick(item.subRu, item.subEn).trim();
+    let need = sub
+      ? Math.max(textLines(label, COL_PX), textLines(sub, COL_PX * 6))
+      : textLines(label, COL_PX * 7);
+    let at = 0;
+    (item.cells || []).forEach((cell) => {
+      const from = Math.round(at * unit);
+      at += Math.max(1, Number(cell.span) || 1);
+      const to = Math.round(at * unit);
+      const width = Math.max(COL_PX, (to - from) * COL_PX);
+      need = Math.max(need, textLines(pick(cell.ru, cell.en).trim(), width));
+    });
+    return Math.max(1, need, Math.max(0, Number(item.minRows) || 0));
+  }
+
   class SheetPage {
     constructor(doc, device, page, lang, num, count) {
       this.doc = doc;
@@ -358,26 +391,9 @@
       return Math.max(1, (this.page.columns || []).length || Number(this.page._ncols) || 1);
     }
 
-    /* Высота строки таблицы: не ниже rowSpan из данных и не ниже, чем нужно
-       тексту. Подпись и значения меряются по фактической ширине объединения,
-       поэтому длинная строка сама занимает две и больше строк. */
+    /* Высота строки таблицы считается по тексту, а не берётся из данных. */
     rowSpanOf(item, cols) {
-      const lines = [];
-      const label = this.pick(item.labelRu, item.labelEn).trim();
-      const sub = this.pick(item.subRu, item.subEn).trim();
-      if (sub) {
-        const labelW = (item.labelMerge !== false ? COL_PX * 7 : COL_PX) - 8;
-        lines.push(textLines(label, labelW));
-        lines.push(textLines(sub, COL_PX * 6 - 8));
-      } else if (label) {
-        lines.push(textLines(label, COL_PX * 7 - 8));
-      }
-      (item.cells || []).forEach((cell) => {
-        const span = Math.max(1, Number(cell.span) || 1);
-        lines.push(textLines(this.pick(cell.ru, cell.en).trim(), (AREA_W * span / cols) - 8));
-      });
-      const need = lines.length ? Math.max.apply(null, lines) : 1;
-      return Math.max(Math.max(1, Number(item.rowSpan) || 1), need);
+      return autoRowSpan(item, cols, this.ru);
     }
 
     spansFor() {
@@ -421,8 +437,9 @@
       const scope = this.pick(page.scopeRu, page.scopeEn).trim();
       if (scope) {
         const prefix = this.ru ? "Область применения: " : "Application area: ";
-        items.push({ type: "scope", text: prefix + scope, at });
-        at += 2;
+        const span = Math.max(2, textLines(indent(prefix + scope), AREA_W));
+        items.push({ type: "scope", text: prefix + scope, span, at });
+        at += span;
       }
 
       const intro = this.pick(page.introRu, page.introEn).trim();
@@ -456,7 +473,7 @@
         const note = this.pick(fig.noteRu, fig.noteEn);
         const noteText = note.trim();
         let noteRows = Math.max(0, Number(fig.noteRows) || 0);
-        if (noteText && !noteRows) noteRows = Math.max(1, textLines(note, AREA_W - 12));
+        if (noteText) noteRows = Math.max(noteRows, textLines(indent(note), AREA_W));
         const natural = fig.image ? imageInfo(fig.image) : null;
         let cellRows = Math.max(0, Number(fig.cellRows) || 0);
         if (!cellRows) cellRows = natural ? autoFigureRows(natural) : FIG_FALLBACK_ROWS;
@@ -522,7 +539,7 @@
         if (it.type === "title") {
           doc.merge(row, COLS.F, row, COLS.X, it.text, S.center);
         } else if (it.type === "scope") {
-          doc.merge(row, COLS.F, row + 1, COLS.X, indent(it.text), S.text);
+          doc.merge(row, COLS.F, row + Math.max(1, it.span) - 1, COLS.X, indent(it.text), S.text);
         } else if (it.type === "intro") {
           doc.merge(row, COLS.F, row, COLS.X, indent(it.text), S.leftLine);
         } else if (it.type === "name") {
@@ -722,15 +739,17 @@
       const rows = filled.length || Math.max(0, Number(mark.rows) || 0) || (code ? 22 : 0);
       if (!code && !scope && !rows) continue;
       const tags = filled.length ? filled : Array.from({ length: rows }, () => "");
+      /* Маркировка тега: одна строка, если текст влезает в F:X, иначе больше. */
+      const markRows = code ? Math.max(2, textLines(code, AREA_W)) : 0;
 
       let first = true;
       let start = 0;
       while (start < tags.length) {
-        const headNeed = (first && code ? 2 : 0) + 3 + 1;
+        const headNeed = (first && code ? markRows : 0) + 3 + 1;
         if (row + headNeed - 1 > bottom) openPage();
         if (first && code) {
-          doc.merge(row, COLS.F, row + 1, COLS.X, code, S.marking);
-          row += 2;
+          doc.merge(row, COLS.F, row + markRows - 1, COLS.X, code, S.marking);
+          row += markRows;
         }
         drawHeader(scope);
         if (row > bottom) { openPage(); continue; }
@@ -1020,5 +1039,5 @@ ${drawings}
     return String(name || "Листы").replace(/[\\/*?:[\]]/g, " ").replace(/\s+/g, " ").trim().slice(0, 31) || "Листы";
   }
 
-  window.DSXlsx = { build };
+  window.DSXlsx = { build, autoRowSpan, textLines };
 })();
