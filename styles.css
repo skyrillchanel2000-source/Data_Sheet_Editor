@@ -1172,6 +1172,28 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
   .tag-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
+/* ---------------- фиксация изменений ---------------- */
+
+.change-switch { grid-column: 1 / -1; padding: 1px 2px; }
+.change-note {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: var(--muted);
+  padding: 0 2px;
+}
+.change-note .link-btn { font-size: 10.5px; }
+
+/* Ячейки, которые правили при включённой фиксации: в Excel они выгружаются
+   жёлтой заливкой, в редакторе подсвечены так же. */
+.changed,
+.changed:hover,
+.changed:focus { background-color: #fff2b8 !important; }
+
 @media (max-width: 760px) {
   .app { display: flex; flex-direction: column; height: auto; min-height: 100%; }
   .sidebar { height: auto; max-height: none; border-right: 0; border-bottom: 1px solid var(--line); }

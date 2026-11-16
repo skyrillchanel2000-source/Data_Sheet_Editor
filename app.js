@@ -479,6 +479,142 @@
     if (hint) hint.hidden = kind !== "error";
   }
 
+  /* ---------------- фиксация изменений ---------------- */
+
+  /* Журнал правок живёт в состоянии проекта (state.changes): переживает
+     перезагрузку и попадает в файл проекта. Пока переключатель включён,
+     каждая правка пишется ключом «владелец|поле», а при выгрузке Excel такие
+     ячейки получают жёлтую заливку. Выключение переключателя журнал чистит —
+     «информация хранится, пока не выключат». */
+
+  const CHG_SEP = "|";
+
+  function changeLog() {
+    if (!state) return { on: false, since: 0, items: {} };
+    if (!state.changes || typeof state.changes !== "object") state.changes = {};
+    const log = state.changes;
+    if (typeof log.on !== "boolean") log.on = false;
+    if (!log.since) log.since = 0;
+    if (!log.items || typeof log.items !== "object") log.items = {};
+    return log;
+  }
+
+  const changesOn = () => changeLog().on === true;
+
+  const changeKey = (...parts) => parts.join(CHG_SEP);
+
+  const isChanged = (key) => Boolean(key) && Object.prototype.hasOwnProperty.call(changeLog().items, key);
+
+  function changedItems() {
+    return changeLog().items;
+  }
+
+  /* Записать правку поля. was — значение до правки (для отчёта и подсказки),
+     at — когда правили в последний раз, first — когда впервые. */
+  function noteChange(key, was) {
+    const log = changeLog();
+    if (!log.on || !key) return false;
+    const now = Date.now();
+    const prev = log.items[key];
+    log.items[key] = {
+      at: now,
+      first: (prev && prev.first) || now,
+      was: prev ? prev.was : String(was == null ? "" : was)
+    };
+    renderChangeState();
+    return true;
+  }
+
+  function fmtWhen(ms) {
+    const d = new Date(Number(ms) || Date.now());
+    const p = (n) => String(n).padStart(2, "0");
+    return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+
+  function changeTitle(key) {
+    const item = changeLog().items[key];
+    if (!item) return "";
+    const first = item.first && item.first !== item.at ? `, впервые ${fmtWhen(item.first)}` : "";
+    return `Изменено ${fmtWhen(item.at)}${first}`;
+  }
+
+  /* Подсветить один элемент (при вводе — без перерисовки листа). */
+  function paintChanged(el, key) {
+    if (!el) return;
+    const on = isChanged(key);
+    el.classList.toggle("changed", on);
+    if (on) el.title = changeTitle(key);
+    else el.removeAttribute("title");
+  }
+
+  /* Разметить уже отрисованные элементы по data-chg-key. */
+  function applyChangeMarks() {
+    const host = $("#editor");
+    if (!host) return;
+    $$("[data-chg-key]", host).forEach((el) => paintChanged(el, el.dataset.chgKey));
+  }
+
+  function renderChangeState() {
+    const log = changeLog();
+    const input = $("#opt-changes");
+    if (input) input.checked = Boolean(log.on);
+    const box = $("#change-note");
+    if (!box) return;
+    const n = Object.keys(log.items).length;
+    if (!log.on && !n) { box.hidden = true; box.innerHTML = ""; return; }
+    box.hidden = false;
+    const count = n ? `${n} ${n === 1 ? "ячейка" : (n < 5 ? "ячейки" : "ячеек")}` : "правок нет";
+    box.innerHTML = log.on
+      ? `<span>Журнал включён: ${count}${log.since ? `, с ${esc(fmtWhen(log.since))}` : ""}</span>${n ? '<button class="link-btn" data-act="changes-clear">Сбросить</button>' : ""}`
+      : `<span>Записано ${count} — жёлтая заливка при выгрузке</span>`;
+  }
+
+  async function toggleChanges(on) {
+    const log = changeLog();
+    if (!on) {
+      const n = Object.keys(log.items).length;
+      if (n) {
+        const ok = await askConfirm({
+          title: "Выключить фиксацию изменений",
+          text: `Записано ${n} ячеек. При выключении журнал очистится, и подсветка в Excel пропадёт. Если подсветка ещё нужна — сначала скачайте Excel, потом выключайте.`,
+          ok: "Выключить и очистить"
+        });
+        if (!ok) { renderChangeState(); return; }
+      }
+      log.on = false;
+      log.since = 0;
+      log.items = {};
+      touch();
+      applyChangeMarks();
+      renderChangeState();
+      toast("Фиксация изменений выключена — журнал очищен");
+      return;
+    }
+    log.on = true;
+    log.since = Date.now();
+    log.items = {};
+    touch();
+    applyChangeMarks();
+    renderChangeState();
+    toast("Фиксация изменений включена: правки ячеек пойдут в журнал и станут жёлтыми в Excel");
+  }
+
+  async function clearChanges() {
+    const log = changeLog();
+    const n = Object.keys(log.items).length;
+    if (!n) return;
+    const ok = await askConfirm({
+      title: "Сбросить отметки",
+      text: `Убрать из журнала все записи (${n})? Подсветка в Excel тоже исчезнет, сам текст листов не изменится.`,
+      ok: "Сбросить"
+    });
+    if (!ok) return;
+    log.items = {};
+    touch();
+    applyChangeMarks();
+    renderChangeState();
+  }
+
   /* ---------------- storage: файл проекта ---------------- */
 
   function stateFileStamp() {
@@ -602,6 +738,7 @@
     state = ensureReference({
       version: 1,
       active: parsed.active || projects[0]?.id,
+      changes: parsed.changes,
       projects: projects.map((p) => ({
         id: p.id || uid("p"),
         name: p.name || "Проект",
@@ -1066,7 +1203,7 @@
     const titleLabel = ru ? (isKit ? "Название комплекта (RU)" : "Название прибора (RU)") : (isKit ? "Kit name (EN)" : "Название прибора (EN)");
     const scopeLabel = ru ? "Область применения (RU)" : "Application area (EN)";
     const introLabel = ru ? "Подводка к таблице (RU)" : "Intro before the table (EN)";
-    const secondTitle = split ? "" : `<label class="field"><span>${ru ? "Второе название (EN)" : "Второе название (RU)"}</span><input value="${esc(ru ? d.titleEn : d.titleRu)}" data-model="${ru ? "titleEn" : "titleRu"}"></label>`;
+    const secondTitle = split ? "" : `<label class="field"><span>${ru ? "Второе название (EN)" : "Второе название (RU)"}</span><input value="${esc(ru ? d.titleEn : d.titleRu)}" data-model="${ru ? "titleEn" : "titleRu"}" data-chg-key="${esc(changeKey(d.id, ru ? "titleEn" : "titleRu"))}"></label>`;
     const numRow = split
       ? ""
       : isKit
@@ -1084,11 +1221,11 @@
       <div class="card-body">
         ${numRow}
         <div class="field-grid${split ? " single" : ""}">
-          <label class="field"><span>${titleLabel}</span><input value="${esc(ru ? d.titleRu : d.titleEn)}" data-model="${ru ? "titleRu" : "titleEn"}" placeholder="${ru ? "ЭМИС-БАР 143" : "EMIS-BAR 143"}"></label>
+          <label class="field"><span>${titleLabel}</span><input value="${esc(ru ? d.titleRu : d.titleEn)}" data-model="${ru ? "titleRu" : "titleEn"}" data-chg-key="${esc(changeKey(d.id, ru ? "titleRu" : "titleEn"))}" placeholder="${ru ? "ЭМИС-БАР 143" : "EMIS-BAR 143"}"></label>
           ${secondTitle}
-          <label class="field full"><span>${scopeLabel}</span><textarea rows="2" data-model="${ru ? "scopeRu" : "scopeEn"}" placeholder="${ru ? "для контроля запыленности фильтра…" : "to control the filter dustiness…"}">${esc(ru ? d.scopeRu : d.scopeEn)}</textarea></label>
-          <label class="field full"><span>${introLabel}</span><textarea rows="2" data-model="${ru ? "introRu" : "introEn"}">${esc(ru ? d.introRu : d.introEn)}</textarea></label>
-          <label class="field full"><span>${ru ? "Подпись таблицы (RU)" : "Table caption (EN)"}</span><textarea rows="2" data-model="${ru ? "nameRu" : "nameEn"}" placeholder="${ru ? "Таблица 1 – Технические характеристики датчика …" : "Table 1 - Technical characteristics of the transmitter …"}">${esc(ru ? (d.nameRu || "") : (d.nameEn || ""))}</textarea></label>
+          <label class="field full"><span>${scopeLabel}</span><textarea rows="2" data-model="${ru ? "scopeRu" : "scopeEn"}" data-chg-key="${esc(changeKey(d.id, ru ? "scopeRu" : "scopeEn"))}" placeholder="${ru ? "для контроля запыленности фильтра…" : "to control the filter dustiness…"}">${esc(ru ? d.scopeRu : d.scopeEn)}</textarea></label>
+          <label class="field full"><span>${introLabel}</span><textarea rows="2" data-model="${ru ? "introRu" : "introEn"}" data-chg-key="${esc(changeKey(d.id, ru ? "introRu" : "introEn"))}">${esc(ru ? d.introRu : d.introEn)}</textarea></label>
+          <label class="field full"><span>${ru ? "Подпись таблицы (RU)" : "Table caption (EN)"}</span><textarea rows="2" data-model="${ru ? "nameRu" : "nameEn"}" data-chg-key="${esc(changeKey(d.id, ru ? "nameRu" : "nameEn"))}" placeholder="${ru ? "Таблица 1 – Технические характеристики датчика …" : "Table 1 - Technical characteristics of the transmitter …"}">${esc(ru ? (d.nameRu || "") : (d.nameEn || ""))}</textarea></label>
         </div>
         <p class="field-note" style="margin:9px 0 0">Красная строка в Excel (8 пробелов) и заголовок таблицы собираются автоматически — вручную пробелы вставлять не нужно.</p>
         ${isKit ? `<div style="margin-top:12px"><button class="btn btn-sm" data-act="del-kit">Удалить комплект</button></div>` : ""}
@@ -1143,7 +1280,7 @@
       const text = String((ru ? cell.ru : cell.en) || "");
       const selected = ui.rowId === row.id && ui.cellId === cell.id;
       return `<div class="vcell${cell.span > 1 ? " merged" : ""}${selected ? " selected" : ""}" style="--gsp:${gs}" contenteditable="true" spellcheck="false"
-        data-edit="cell" data-r="${row.id}" data-c="${cell.id}" data-col="${at - cell.span}"
+        data-edit="cell" data-r="${row.id}" data-c="${cell.id}" data-col="${at - cell.span}" data-chg-key="${esc(changeKey(row.id, cell.id, ru ? "ru" : "en"))}"
         data-ph="${ru ? "значение" : "value"}">${esc(text)}</div>`;
     }).join("");
     const label = String((ru ? row.labelRu : row.labelEn) || "");
@@ -1155,7 +1292,7 @@
       }).join("")}</div>`
       : "";
     return `<div class="tr${ui.rowId === row.id ? " selected" : ""}" data-row="${row.id}">
-      <div class="td label" contenteditable="true" spellcheck="false" data-edit="label" data-r="${row.id}" data-ph="${ru ? "параметр" : "parameter"}">${esc(label)}</div>
+      <div class="td label" contenteditable="true" spellcheck="false" data-edit="label" data-r="${row.id}" data-chg-key="${esc(changeKey(row.id, ru ? "labelRu" : "labelEn"))}" data-ph="${ru ? "параметр" : "parameter"}">${esc(label)}</div>
       <div class="td value">${mergeBar}<div class="vgrid">${cells}</div>
         <button class="row-plus" data-act="row-cols" data-r="${row.id}" title="Сколько колонок в этой строке" aria-label="Колонки строки ${ri + 1}">+</button>
       </div>
@@ -1200,8 +1337,8 @@
   function tagsHTML(d) {
     const marks = d.markings.length
       ? d.markings.map((m, i) => `<div class="mark-row">
-          <input value="${esc(m.code)}" data-mark="${m.id}" data-field="code" placeholder="Полная маркировка прибора ${i + 1}" aria-label="Маркировка ${i + 1}">
-          <input value="${esc(m.note)}" data-mark="${m.id}" data-field="note" placeholder="Примечание" aria-label="Примечание к маркировке ${i + 1}">
+          <input value="${esc(m.code)}" data-mark="${m.id}" data-field="code" data-chg-key="${esc(changeKey(m.id, "code"))}" placeholder="Полная маркировка прибора ${i + 1}" aria-label="Маркировка ${i + 1}">
+          <input value="${esc(m.note)}" data-mark="${m.id}" data-field="note" data-chg-key="${esc(changeKey(m.id, "note"))}" placeholder="Примечание" aria-label="Примечание к маркировке ${i + 1}">
           <button class="icon-btn danger" data-act="del-mark" data-id="${m.id}" aria-label="Удалить маркировку">✕</button>
         </div>`).join("")
       : '<div class="tag-empty">Маркировка не заполнена — на странице TAG будет только таблица тегов.</div>';
@@ -1211,14 +1348,14 @@
         const slots = g.tags.length
           ? g.tags.map((t, ti) => `<span class="tag-slot">
               <span class="tag-no">${ti + 1}</span>
-              <input value="${esc(t)}" data-group="${g.id}" data-tag="${ti}" placeholder="тег" aria-label="Тег ${ti + 1} области ${gi + 1}">
+              <input value="${esc(t)}" data-group="${g.id}" data-tag="${ti}" data-chg-key="${esc(changeKey(g.id, "tag", t))}" placeholder="тег" aria-label="Тег ${ti + 1} области ${gi + 1}">
               <button class="x" data-act="del-tag" data-group="${g.id}" data-tag="${ti}" aria-label="Удалить тег ${ti + 1}">×</button>
             </span>`).join("")
           : '<div class="tag-empty" style="grid-column:1/-1">Тегов пока нет — в Excel будут пустые строки №1–22 для заполнения от руки.</div>';
         return `<div class="tag-group">
           <div class="tag-group-head">
-            <input value="${esc(g.scopeRu)}" data-group="${g.id}" data-field="scopeRu" placeholder="Область применения (RU)">
-            <input value="${esc(g.scopeEn)}" data-group="${g.id}" data-field="scopeEn" placeholder="Application area (EN)">
+            <input value="${esc(g.scopeRu)}" data-group="${g.id}" data-field="scopeRu" data-chg-key="${esc(changeKey(g.id, "scopeRu"))}" placeholder="Область применения (RU)">
+            <input value="${esc(g.scopeEn)}" data-group="${g.id}" data-field="scopeEn" data-chg-key="${esc(changeKey(g.id, "scopeEn"))}" placeholder="Application area (EN)">
             <button class="icon-btn danger" data-act="del-group" data-id="${g.id}" aria-label="Удалить область">✕</button>
           </div>
           <div class="tag-grid">${slots}</div>
@@ -1258,10 +1395,10 @@
             <button class="replace" data-act="pick-image" data-id="${f.id}">${f.image ? "Заменить рисунок" : "Выбрать файл"}</button>
           </div>
           <div class="figure-fields">
-            <label class="field"><span>Подпись (RU)</span><input value="${esc(f.captionRu)}" data-fig="${f.id}" data-field="captionRu" placeholder="Рисунок 1 - Внешний вид датчика"></label>
-            <label class="field"><span>Caption (EN)</span><input value="${esc(f.captionEn)}" data-fig="${f.id}" data-field="captionEn" placeholder="Figure 1 - The appearance of the sensor"></label>
-            <label class="field"><span>Подводка (RU)</span><input value="${esc(f.noteRu)}" data-fig="${f.id}" data-field="noteRu" placeholder="Внешний вид датчика … представлен на рисунке 1."></label>
-            <label class="field"><span>Note (EN)</span><input value="${esc(f.noteEn)}" data-fig="${f.id}" data-field="noteEn" placeholder="The appearance of the sensor is shown in Figure 1."></label>
+            <label class="field"><span>Подпись (RU)</span><input value="${esc(f.captionRu)}" data-fig="${f.id}" data-field="captionRu" data-chg-key="${esc(changeKey(f.id, "captionRu"))}" placeholder="Рисунок 1 - Внешний вид датчика"></label>
+            <label class="field"><span>Caption (EN)</span><input value="${esc(f.captionEn)}" data-fig="${f.id}" data-field="captionEn" data-chg-key="${esc(changeKey(f.id, "captionEn"))}" placeholder="Figure 1 - The appearance of the sensor"></label>
+            <label class="field"><span>Подводка (RU)</span><input value="${esc(f.noteRu)}" data-fig="${f.id}" data-field="noteRu" data-chg-key="${esc(changeKey(f.id, "noteRu"))}" placeholder="Внешний вид датчика … представлен на рисунке 1."></label>
+            <label class="field"><span>Note (EN)</span><input value="${esc(f.noteEn)}" data-fig="${f.id}" data-field="noteEn" data-chg-key="${esc(changeKey(f.id, "noteEn"))}" placeholder="The appearance of the sensor is shown in Figure 1."></label>
             <label class="field"><span>Строк под рисунок</span><input type="number" min="0" max="56" step="1" value="${f.cellRows || 0}" data-fig="${f.id}" data-field="cellRows" data-num="1" placeholder="авто"></label>
             <label class="field"><span>Строк подводки</span><input type="number" min="0" max="20" step="1" value="${f.noteRows || 0}" data-fig="${f.id}" data-field="noteRows" data-num="1"></label>
           </div>
@@ -1292,6 +1429,8 @@
       }
     }
     applyRefState();
+    applyChangeMarks();
+    renderChangeState();
   };
 
   /* ---------------- reference lock ---------------- */
@@ -1337,9 +1476,15 @@
       renderSidebar();
       return;
     }
+    const before = d[key];
     if (key === "no") d.no = Math.max(1, Math.round(num(value, d.no)));
     else if (key === "suffix") d.suffix = value.trim();
     else d[key] = value;
+    if (TRACKED_META.has(key) && String(before == null ? "" : before) !== String(d[key] == null ? "" : d[key])) {
+      const chgKey = changeKey(d.id, key);
+      noteChange(chgKey, before);
+      paintChanged(el, chgKey);
+    }
     if (EN_FIELD[key]) syncMetaField(d, key, value);
     touch();
     if (key.startsWith("title") || key === "no" || key === "suffix") {
@@ -1351,6 +1496,9 @@
   }
 
   const EN_FIELD = { titleRu: "titleEn", scopeRu: "scopeEn", introRu: "introEn", nameRu: "nameEn" };
+
+  /* Поля листа, которые печатаются в книге и потому попадают в журнал правок. */
+  const TRACKED_META = new Set(["titleRu", "titleEn", "scopeRu", "scopeEn", "introRu", "introEn", "nameRu", "nameEn"]);
 
   /* Слова, которые автоперевод не смог перевести: показываются в панели
      перевода, по клику из них собирается своя пара в глоссарии. */
@@ -1391,18 +1539,22 @@
     const text = tr.text;
     if (autoOn) noteMissing(tr.words);
     if (d[dst] === text) return;
+    const before = d[dst];
     d[dst] = text;
     const input = $(`[data-model="${dst}"]`, $("#editor"));
     if (input && document.activeElement !== input) input.value = text;
+    const chgKey = changeKey(d.id, dst);
+    if (noteChange(chgKey, before)) paintChanged(input, chgKey);
   }
 
-  function syncTableText(kind, id, text) {
+  function syncTableText(kind, id, text, chgKey) {
     const root = $('.split-col[data-panel="en"]', $("#editor"));
     if (!root) return;
     const el = kind === "label"
       ? $(`.td.label[data-r="${id}"]`, root)
       : $(`.vcell[data-c="${id}"]`, root);
     if (el && document.activeElement !== el) el.textContent = text;
+    if (el && chgKey) paintChanged(el, chgKey);
   }
 
   function applyEditable(el) {
@@ -1414,21 +1566,41 @@
     const ru = (panel ? panel.dataset.panel : ui.lang) === "ru";
     const value = el.innerText.replace(/\u00a0/g, " ").replace(/\n$/, "");
     if (el.dataset.edit === "label") {
-      row[ru ? "labelRu" : "labelEn"] = value;
+      const field = ru ? "labelRu" : "labelEn";
+      const before = row[field] || "";
+      row[field] = value;
+      if (before !== value) {
+        const chgKey = changeKey(row.id, field);
+        noteChange(chgKey, before);
+        paintChanged(el, chgKey);
+      }
       if (ru && syncOn) {
         const tr = autoOn ? translateRu(value) : { text: value, words: [] };
+        const wasEn = row.labelEn || "";
         row.labelEn = tr.text;
-        syncTableText("label", row.id, row.labelEn);
+        const chgKey = changeKey(row.id, "labelEn");
+        if (wasEn !== row.labelEn) noteChange(chgKey, wasEn);
+        syncTableText("label", row.id, row.labelEn, chgKey);
         if (autoOn) noteMissing(tr.words);
       }
     } else {
       const cell = row.cells.find((c) => c.id === el.dataset.c);
       if (cell) {
-        cell[ru ? "ru" : "en"] = value;
+        const field = ru ? "ru" : "en";
+        const before = cell[field] || "";
+        cell[field] = value;
+        if (before !== value) {
+          const chgKey = changeKey(row.id, cell.id, field);
+          noteChange(chgKey, before);
+          paintChanged(el, chgKey);
+        }
         if (ru && syncOn) {
           const tr = autoOn ? translateRu(value) : { text: value, words: [] };
+          const wasEn = cell.en || "";
           cell.en = tr.text;
-          syncTableText("cell", cell.id, cell.en);
+          const chgKey = changeKey(row.id, cell.id, "en");
+          if (wasEn !== cell.en) noteChange(chgKey, wasEn);
+          syncTableText("cell", cell.id, cell.en, chgKey);
           if (autoOn) noteMissing(tr.words);
         }
       }
@@ -1440,20 +1612,20 @@
 
   function translateList(d) {
     const jobs = [];
-    const add = (ru, get, set) => { jobs.push({ ru, get, set }); };
-    add(d.titleRu, () => d.titleEn, (v) => { d.titleEn = v; });
-    add(d.scopeRu, () => d.scopeEn, (v) => { d.scopeEn = v; });
-    add(d.introRu, () => d.introEn, (v) => { d.introEn = v; });
-    add(d.nameRu, () => d.nameEn, (v) => { d.nameEn = v; });
+    const add = (ru, get, set, key) => { jobs.push({ ru, get, set, key }); };
+    add(d.titleRu, () => d.titleEn, (v) => { d.titleEn = v; }, changeKey(d.id, "titleEn"));
+    add(d.scopeRu, () => d.scopeEn, (v) => { d.scopeEn = v; }, changeKey(d.id, "scopeEn"));
+    add(d.introRu, () => d.introEn, (v) => { d.introEn = v; }, changeKey(d.id, "introEn"));
+    add(d.nameRu, () => d.nameEn, (v) => { d.nameEn = v; }, changeKey(d.id, "nameEn"));
     (d.rows || []).forEach((row) => {
-      add(row.labelRu, () => row.labelEn, (v) => { row.labelEn = v; });
-      (row.cells || []).forEach((cell) => add(cell.ru, () => cell.en, (v) => { cell.en = v; }));
+      add(row.labelRu, () => row.labelEn, (v) => { row.labelEn = v; }, changeKey(row.id, "labelEn"));
+      (row.cells || []).forEach((cell) => add(cell.ru, () => cell.en, (v) => { cell.en = v; }, changeKey(row.id, cell.id, "en")));
     });
     (d.figures || []).forEach((fig) => {
-      add(fig.captionRu, () => fig.captionEn, (v) => { fig.captionEn = v; });
-      add(fig.noteRu, () => fig.noteEn, (v) => { fig.noteEn = v; });
+      add(fig.captionRu, () => fig.captionEn, (v) => { fig.captionEn = v; }, changeKey(fig.id, "captionEn"));
+      add(fig.noteRu, () => fig.noteEn, (v) => { fig.noteEn = v; }, changeKey(fig.id, "noteEn"));
     });
-    (d.tagGroups || []).forEach((group) => add(group.scopeRu, () => group.scopeEn, (v) => { group.scopeEn = v; }));
+    (d.tagGroups || []).forEach((group) => add(group.scopeRu, () => group.scopeEn, (v) => { group.scopeEn = v; }, changeKey(group.id, "scopeEn")));
     return jobs.filter((job) => String(job.ru || "").trim());
   }
 
@@ -1477,7 +1649,11 @@
       });
       if (!ok) return;
     }
-    results.forEach((r) => r.set(r.translated.text));
+    results.forEach((r) => {
+      const before = r.get();
+      r.set(r.translated.text);
+      if (before !== r.translated.text) noteChange(r.key, before);
+    });
     noteMissing(results.reduce((acc, r) => acc.concat(r.translated.words || []), []));
     touch();
     render();
@@ -1634,11 +1810,23 @@
 
   /* ---------------- structural edits ---------------- */
 
+  /* Новая или перестроенная строка: все её ячейки попадают в журнал правок. */
+  function markRowCells(row) {
+    if (!changesOn() || !row) return;
+    noteChange(changeKey(row.id, "labelRu"), "");
+    noteChange(changeKey(row.id, "labelEn"), "");
+    (row.cells || []).forEach((cell) => {
+      noteChange(changeKey(row.id, cell.id, "ru"), "");
+      noteChange(changeKey(row.id, cell.id, "en"), "");
+    });
+  }
+
   function addRow(afterId) {
     const d = sheet();
     const row = { id: uid("r"), labelRu: "", labelEn: "", rowSpan: 1, cells: [{ id: uid("c"), span: d.columns.length, ru: "", en: "" }] };
     const idx = afterId ? d.rows.findIndex((r) => r.id === afterId) : d.rows.length - 1;
     d.rows.splice(idx + 1, 0, row);
+    markRowCells(row);
     ui.rowId = row.id;
     ui.cellId = row.cells[0].id;
     touch();
@@ -1723,6 +1911,7 @@
       });
     }
     row.cells = cells;
+    markRowCells(row);
     ui.rowId = row.id;
     ui.cellId = cells[0].id;
     touch();
@@ -1813,6 +2002,7 @@
       else a[k] = left && right && left !== right ? `${left}\n${right}` : (left || right);
     });
     row.cells.splice(i + 1, 1);
+    markRowCells(row);
     pendingMerge = null;
     const dlg = $("#merge-dialog");
     if (dlg && typeof dlg.close === "function") dlg.close();
@@ -1833,6 +2023,7 @@
       parts.push({ id: uid("c"), span: 1, ru: k === 0 ? cell.ru : "", en: k === 0 ? cell.en : "" });
     }
     row.cells.splice(i, 1, ...parts);
+    markRowCells(row);
     ui.cellId = parts[0].id;
     touch();
     render();
@@ -2307,7 +2498,7 @@
       if (!(await staleTabGuard())) return;
       const snapshot = clone(state);
       const failed = await resolveFigureImages(snapshot);
-      const result = window.DSXlsx.build(snapshot, { measure: textLines });
+      const result = window.DSXlsx.build(snapshot, { measure: textLines, changes: snapshot.changes });
       if (!result || !result.blob) throw new Error("Не удалось собрать книгу");
       const url = URL.createObjectURL(result.blob);
       const a = document.createElement("a");
@@ -2374,6 +2565,7 @@
       if (act === "gloss-learn") { openGlossary(el.dataset.ru); return; }
       if (act === "gloss-clear") { missingWords = []; renderMissing(); return; }
       if (act === "gloss-del") { deleteGlossPair(el.dataset.ru); return; }
+      if (act === "changes-clear") { clearChanges(); return; }
       if (act === "kit") { ui.kitId = el.dataset.id || null; ui.rowId = null; ui.cellId = null; render(); return; }
       if (act === "add-kit") { addKit(); return; }
       if (act === "copy-kit") { copyKit(); return; }
@@ -2456,6 +2648,10 @@
         writeFlag(SYNC_STORE, syncOn);
         const hint = $("#tr-hint");
         if (hint) hint.textContent = translateHint();
+        return;
+      }
+      if (el.id === "opt-changes") {
+        toggleChanges(el.checked);
       }
     });
 
@@ -2473,7 +2669,17 @@
       if (el.matches("[data-mark]")) {
         const d = sheet();
         const m = d.markings.find((x) => x.id === el.dataset.mark);
-        if (m) { m[el.dataset.field] = el.value; touch(); }
+        if (m) {
+          const field = el.dataset.field;
+          const before = m[field];
+          m[field] = el.value;
+          const chgKey = changeKey(m.id, field);
+          if (String(before == null ? "" : before) !== el.value) {
+            noteChange(chgKey, before);
+            paintChanged(el, chgKey);
+          }
+          touch();
+        }
         return;
       }
       if (el.matches("[data-fig]")) {
@@ -2481,11 +2687,17 @@
         const f = d.figures.find((x) => x.id === el.dataset.fig);
         if (f) {
           const field = el.dataset.field;
+          const before = f[field];
           if (el.dataset.num) {
             const n = Number.parseInt(el.value, 10);
             f[field] = Number.isFinite(n) ? Math.max(0, n) : 0;
           } else {
             f[field] = el.value;
+          }
+          if (!el.dataset.num && String(before == null ? "" : before) !== String(f[field] == null ? "" : f[field])) {
+            const chgKey = changeKey(f.id, field);
+            noteChange(chgKey, before);
+            paintChanged(el, chgKey);
           }
           if (field === "noteRu" || field === "noteEn") {
             const rows = noteRowsFor(f);
@@ -2493,9 +2705,13 @@
           }
           const dst = { captionRu: "captionEn", noteRu: "noteEn" }[field];
           if (dst && syncOn) {
+            const wasEn = f[dst];
             f[dst] = toEnglish(el.value);
             const twin = $(`[data-fig="${f.id}"][data-field="${dst}"]`, $("#editor"));
             if (twin && document.activeElement !== twin) twin.value = f[dst];
+            const chgKey = changeKey(f.id, dst);
+            if (String(wasEn == null ? "" : wasEn) !== String(f[dst] == null ? "" : f[dst])) noteChange(chgKey, wasEn);
+            paintChanged(twin, chgKey);
           }
           touch();
         }
@@ -2505,15 +2721,28 @@
         const d = sheet();
         const g = d.tagGroups.find((x) => x.id === el.dataset.group);
         if (!g) return;
-        if (el.dataset.tag != null) { g.tags[Number(el.dataset.tag)] = el.value; touch(); }
-        else if (el.dataset.field) {
+        if (el.dataset.tag != null) {
+          const i = Number(el.dataset.tag);
+          const before = g.tags[i] || "";
+          g.tags[i] = el.value;
+          const chgKey = changeKey(g.id, "tag", el.value);
+          if (before !== el.value) { noteChange(chgKey, before); paintChanged(el, chgKey); }
+          touch();
+        } else if (el.dataset.field) {
           const field = el.dataset.field;
+          const before = g[field];
           g[field] = el.value;
+          const chgKey = changeKey(g.id, field);
+          if (String(before == null ? "" : before) !== el.value) { noteChange(chgKey, before); paintChanged(el, chgKey); }
           const dst = { scopeRu: "scopeEn" }[field];
           if (dst && syncOn) {
+            const wasEn = g[dst];
             g[dst] = toEnglish(el.value);
             const twin = $(`[data-group="${g.id}"][data-field="${dst}"]`, $("#editor"));
             if (twin && document.activeElement !== twin) twin.value = g[dst];
+            const enKey = changeKey(g.id, dst);
+            if (String(wasEn == null ? "" : wasEn) !== String(g[dst] == null ? "" : g[dst])) noteChange(enKey, wasEn);
+            paintChanged(twin, enKey);
           }
           touch();
         }
@@ -2599,6 +2828,7 @@
         .filter((v) => v && !/^(тег|tag|tags)$/i.test(v));
       if (!items.length) { toast("Нет тегов для вставки", true); return; }
       g.tags.push(...items);
+      items.forEach((tag) => noteChange(changeKey(g.id, "tag", tag), ""));
       tagTarget = null;
       const dlg = $("#tags-dialog");
       if (dlg && typeof dlg.close === "function") dlg.close();

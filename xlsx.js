@@ -45,10 +45,18 @@
     capBottomCenter: 18
   };
 
+  /* Сколько стилей в cellXfs до «жёлтых» копий. Правленые ячейки получают
+     тот же стиль со сдвигом CHG_ON — заливка та же рамка и шрифт, но жёлтый
+     фон (fillId=2), поэтому подсветка не ломает оформление эталона. */
+  const CHG_ON = 19;
+  const CHG_SEP = "|";
+
   const BOTTOM_STYLE = (s) => {
-    if (s === S.thinCenter) return S.capBottomCenter;
-    if (s === S.center || s === S.marking) return S.capBottom;
-    return S.capBottomWrap;
+    const chg = s >= CHG_ON ? CHG_ON : 0;
+    const base = s - chg;
+    if (base === S.thinCenter) return S.capBottomCenter + chg;
+    if (base === S.center || base === S.marking) return S.capBottom + chg;
+    return S.capBottomWrap + chg;
   };
 
   const colLetter = (n) => {
@@ -370,16 +378,31 @@
   }
 
   class SheetPage {
-    constructor(doc, device, page, lang, num, count) {
+    constructor(doc, device, page, lang, num, count, owner, isChanged) {
       this.doc = doc;
       this.device = device;
       this.page = page || {};
       this.lang = lang;
       this.num = num;
       this.count = Math.max(0, Number(count) || 0);
+      this.owner = owner || this.page.id || device.id || "";
+      this.isChanged = typeof isChanged === "function" ? isChanged : null;
       this.ru = lang === "ru";
       this.pages = [];
       this._spans = null;
+    }
+
+    /* Поля RU/EN печатаются с подстановкой: пустой английский берёт русский
+       текст, поэтому ключ правки — тот, что реально попал в книгу. */
+    keyFor(obj, field) {
+      const en = String((obj && obj[field + "En"]) == null ? "" : obj[field + "En"]).trim();
+      return !this.ru && en ? field + "En" : field + "Ru";
+    }
+
+    /* Сдвиг стиля, если ячейка правилась при включённой фиксации. */
+    mark(...parts) {
+      if (!this.isChanged) return 0;
+      return this.isChanged(parts.join(CHG_SEP)) ? CHG_ON : 0;
     }
 
     pick(ru, en) {
@@ -537,22 +560,23 @@
       head.items.forEach((it) => {
         const row = top + it.at;
         if (it.type === "title") {
-          doc.merge(row, COLS.F, row, COLS.X, it.text, S.center);
+          doc.merge(row, COLS.F, row, COLS.X, it.text, S.center + this.mark(this.owner, this.keyFor(this.page, "title")));
         } else if (it.type === "scope") {
-          doc.merge(row, COLS.F, row + Math.max(1, it.span) - 1, COLS.X, indent(it.text), S.text);
+          doc.merge(row, COLS.F, row + Math.max(1, it.span) - 1, COLS.X, indent(it.text), S.text + this.mark(this.owner, this.keyFor(this.page, "scope")));
         } else if (it.type === "intro") {
-          doc.merge(row, COLS.F, row, COLS.X, indent(it.text), S.leftLine);
+          doc.merge(row, COLS.F, row, COLS.X, indent(it.text), S.leftLine + this.mark(this.owner, this.keyFor(this.page, "intro")));
         } else if (it.type === "name") {
+          const chg = this.mark(this.owner, this.keyFor(this.page, "name"));
           const titleText = this.pick(this.page.titleRu, this.page.titleEn).trim();
           const tail = titleText && it.text.endsWith(titleText) ? titleText : "";
           if (tail) {
             const prefix = it.text.slice(0, it.text.length - tail.length);
-            for (let c = COLS.F; c <= COLS.X; c += 1) doc.cell(row, c, "", S.leftLine);
-            doc.merge(row, COLS.F, row, COLS.X, "", S.leftLine);
+            for (let c = COLS.F; c <= COLS.X; c += 1) doc.cell(row, c, "", S.leftLine + chg);
+            doc.merge(row, COLS.F, row, COLS.X, "", S.leftLine + chg);
             const literal = `        ${prefix}`;
-            doc.formula(row, COLS.F, `"${literal.replace(/"/g, '""')}"&F${top + it.titleAt}`, indent(it.text), S.leftLine);
+            doc.formula(row, COLS.F, `"${literal.replace(/"/g, '""')}"&F${top + it.titleAt}`, indent(it.text), S.leftLine + chg);
           } else {
-            doc.merge(row, COLS.F, row, COLS.X, indent(it.text), S.leftLine);
+            doc.merge(row, COLS.F, row, COLS.X, indent(it.text), S.leftLine + chg);
           }
         } else if (it.type === "head") {
           for (let c = COLS.F; c <= COLS.X; c += 1) doc.cell(row, c, "", S.thinCenter);
@@ -575,18 +599,21 @@
       const label = this.pick(item.labelRu, item.labelEn).trim();
       const sub = this.pick(item.subRu, item.subEn).trim();
       if (sub) {
-        if (item.labelMerge !== false) doc.merge(row, COLS.F, end, COLS.F, label, S.thinLeft);
-        else doc.cell(row, COLS.F, label, S.thinLeft);
-        doc.merge(row, COLS.F + 1, end, COLS.L, sub, S.thinLeft);
+        const chgLabel = this.mark(item.id, this.keyFor(item, "label"));
+        const chgSub = this.mark(item.id, this.keyFor(item, "sub"));
+        if (item.labelMerge !== false) doc.merge(row, COLS.F, end, COLS.F, label, S.thinLeft + chgLabel);
+        else doc.cell(row, COLS.F, label, S.thinLeft + chgLabel);
+        doc.merge(row, COLS.F + 1, end, COLS.L, sub, S.thinLeft + chgSub);
       } else {
-        doc.merge(row, COLS.F, end, COLS.L, label, S.thinLeft);
+        doc.merge(row, COLS.F, end, COLS.L, label, S.thinLeft + this.mark(item.id, this.keyFor(item, "label")));
       }
       let at = 0;
       (item.cells || []).forEach((cell) => {
         const from = COLS.M + Math.round(at * unit);
         at += Math.max(1, Number(cell.span) || 1);
         const to = Math.min(COLS.X, COLS.M + Math.round(at * unit) - 1);
-        doc.merge(row, from, end, Math.max(from, to), this.pick(cell.ru, cell.en).trim(), S.thinCenter);
+        const field = this.ru ? "ru" : (EMPTY_TEXT(cell.en).trim() ? "en" : "ru");
+        doc.merge(row, from, end, Math.max(from, to), this.pick(cell.ru, cell.en).trim(), S.thinCenter + this.mark(item.id, cell.id, field));
       });
     }
 
@@ -595,7 +622,7 @@
       (layout.blocks || []).forEach((item) => {
         let row = top + item.at;
         if (item.noteText && item.noteRows) {
-          doc.merge(row, COLS.F, row + item.noteRows - 1, COLS.X, indent(item.note), S.text);
+          doc.merge(row, COLS.F, row + item.noteRows - 1, COLS.X, indent(item.note), S.text + this.mark(item.fig.id, this.keyFor(item.fig, "note")));
         }
         row += item.noteRows;
 
@@ -626,7 +653,7 @@
         row += item.cellRows;
 
         if (item.cap) {
-          doc.merge(row, COLS.F, row, COLS.X, item.cap, S.center);
+          doc.merge(row, COLS.F, row, COLS.X, item.cap, S.center + this.mark(item.fig.id, this.keyFor(item.fig, "caption")));
           doc.rows.set(row, 16.5);
         }
       });
@@ -661,9 +688,10 @@
   const TAG_ROWS_MIN = 4;
   const TAG_COL_PX = 38;
 
-  function tagsPage(doc, device) {
+  function tagsPage(doc, device, isChanged) {
     const marks = device.markings || [];
     const groups = device.tagGroups || [];
+    const chg = (key) => (typeof isChanged === "function" && isChanged(key) ? CHG_ON : 0);
     const texts = (list) => (Array.isArray(list) ? list : []).map((t) => String(t == null ? "" : t).trim());
     const count = Math.max(marks.length, groups.length);
 
@@ -681,19 +709,19 @@
       bottom = top + FRAME_ROWS;
     };
 
-    const drawHeader = (scope) => {
+    const drawHeader = (scope, chgKey) => {
       for (let r = row; r <= row + 2; r += 1) {
         for (let c = COLS.F; c <= TAG_LAST_COL; c += 1) doc.cell(r, c, "", S.thinCenter);
       }
       doc.merge(row, COLS.F, row + 2, COLS.F, "№", S.thinCenter);
-      doc.merge(row, COLS.F + 1, row + 2, TAG_LAST_COL, scope, S.thinCenter);
+      doc.merge(row, COLS.F + 1, row + 2, TAG_LAST_COL, scope, S.thinCenter + chgKey);
       row += 3;
     };
 
     /* Теги идут сверху вниз, затем в следующую колонку. Номер один — в первой
        колонке. Колонок не больше четырёх: чем длиннее тег, тем меньше колонок
        и шире объединение, чтобы текст помещался в одну строку. */
-    const drawGrid = (tags, start, height) => {
+    const drawGrid = (tags, start, height, groupId) => {
       const left = tags.length - start;
       const blank = !tags.some(Boolean);
       const areaCols = TAG_LAST_COL - COLS.F;
@@ -717,7 +745,9 @@
         for (let j = 0; j < cols; j += 1) {
           const idx = start + j * rows + i;
           const to = Math.max(bounds[j], bounds[j + 1] - 1);
-          doc.merge(row, bounds[j], row, to, idx < tags.length ? (tags[idx] || "") : "", S.thinCenter);
+          const text = idx < tags.length ? (tags[idx] || "") : "";
+          const mark = text && groupId ? chg([groupId, "tag", text].join(CHG_SEP)) : 0;
+          doc.merge(row, bounds[j], row, to, text, S.thinCenter + mark);
         }
         row += 1;
       }
@@ -744,16 +774,18 @@
 
       let first = true;
       let start = 0;
+      const groupId = group.id || "";
+      const scopeChg = chg([groupId, "scopeRu"].join(CHG_SEP)) || chg([groupId, "scopeEn"].join(CHG_SEP)) || chg([mark.id || "", "note"].join(CHG_SEP));
       while (start < tags.length) {
         const headNeed = (first && code ? markRows : 0) + 3 + 1;
         if (row + headNeed - 1 > bottom) openPage();
         if (first && code) {
-          doc.merge(row, COLS.F, row + markRows - 1, COLS.X, code, S.marking);
+          doc.merge(row, COLS.F, row + markRows - 1, COLS.X, code, S.marking + chg([mark.id || "", "code"].join(CHG_SEP)));
           row += markRows;
         }
-        drawHeader(scope);
+        drawHeader(scope, scopeChg);
         if (row > bottom) { openPage(); continue; }
-        start = drawGrid(tags, start, bottom - row + 1);
+        start = drawGrid(tags, start, bottom - row + 1, groupId);
         first = false;
       }
     }
@@ -809,7 +841,12 @@
       xf(1, 0, centreWrap),
       xf(1, 3, para),
       xf(1, 3, centreWrap)
-    ].join("");
+    ];
+
+    /* Те же стили с жёлтой заливкой — для ячеек, которые правили при
+       включённой фиксации изменений. */
+    const chgXfs = xfs.map((x) => x.replace('fillId="0"', 'fillId="2" applyFill="1"'));
+    const allXfs = xfs.concat(chgXfs).join("");
 
     return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
@@ -817,10 +854,10 @@
 <font><sz val="11"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font>
 <font><sz val="12"/><name val="Times New Roman"/><family val="1"/><charset val="204"/></font>
 </fonts>
-<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>
+<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFFF00"/><bgColor indexed="64"/></patternFill></fill></fills>
 <borders count="10">${borders}</borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="19">${xfs}</cellXfs>
+<cellXfs count="${xfs.length + chgXfs.length}">${allXfs}</cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 </styleSheet>`;
   }
@@ -905,6 +942,12 @@ ${doc.images.map(anchor).join("")}
     const projects = (state.projects || []).filter((p) => (p.devices || []).length);
     if (!projects.length) throw new Error("В книге нет ни одного листа");
 
+    /* Журнал правок: ключ «владелец|поле» есть в changes.items — ячейка
+       выгружается с жёлтой заливкой. Пусто или фиксация выключена — книга
+       собирается ровно как раньше. */
+    const chgItems = ((opts.changes || state.changes || {}).items) || {};
+    const isChanged = (key) => Boolean(key) && Object.prototype.hasOwnProperty.call(chgItems, key);
+
     const sheets = [];
     projects.forEach((project) => {
       const doc = new Doc();
@@ -914,6 +957,7 @@ ${doc.images.map(anchor).join("")}
         const main = (device.pages && device.pages[0]) || legacyMain;
         const extras = (device.kits && device.kits.length) ? device.kits : (device.pages || []).slice(1);
         const pages = [main].concat(extras);
+        const owners = pages.map((page, i) => (i === 0 ? device.id : (page.id || device.id)));
 
         /* Сколько физических страниц займёт каждая логическая страница. Рисунок
            целиком уходит на следующую страницу, поэтому число страниц зависит
@@ -932,12 +976,12 @@ ${doc.images.map(anchor).join("")}
         const ruNum = counter();
         const enNum = counter();
         pages.forEach((page, i) => {
-          new SheetPage(doc, device, page, "ru", ruNum, counts[i]).render();
+          new SheetPage(doc, device, page, "ru", ruNum, counts[i], owners[i], isChanged).render();
         });
         pages.forEach((page, i) => {
-          new SheetPage(doc, device, page, "en", enNum, counts[i]).render();
+          new SheetPage(doc, device, page, "en", enNum, counts[i], owners[i], isChanged).render();
         });
-        tagsPage(doc, device);
+        tagsPage(doc, device, isChanged);
       });
       sheets.push({ name: safeName(project.name), doc });
     });
