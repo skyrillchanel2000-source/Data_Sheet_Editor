@@ -546,11 +546,17 @@
       return pages;
     }
 
-    /* Сколько физических страниц займёт лист (без записи в книгу). */
-    planCount() {
+    /* Раскладка листа: какие рисунки на какой физической странице
+       (без записи в книгу). */
+    plan() {
       const kind = this.page.kind || "main";
       const head = this.headItems(kind);
-      return this.paginate(head.end, this.figureBlocks(), kind).length;
+      return this.paginate(head.end, this.figureBlocks(), kind);
+    }
+
+    /* Сколько физических страниц займёт лист (без записи в книгу). */
+    planCount() {
+      return this.plan().length;
     }
 
     drawHead(head, top) {
@@ -659,11 +665,11 @@
       });
     }
 
-    render() {
+    render(layout) {
       const doc = this.doc;
       const kind = this.page.kind || "main";
       const head = this.headItems(kind);
-      const plan = this.paginate(head.end, this.figureBlocks(), kind);
+      const plan = layout || this.paginate(head.end, this.figureBlocks(), kind);
       const total = Math.max(plan.length, this.count);
 
       for (let i = 0; i < total; i += 1) {
@@ -963,11 +969,17 @@ ${doc.images.map(anchor).join("")}
            целиком уходит на следующую страницу, поэтому число страниц зависит
            от текста; в RU и EN оно берётся одинаковым — иначе не совпадут
            номера листов. */
-        const counts = pages.map((page) => {
-          const ru = new SheetPage(null, device, page, "ru", null, 0).planCount();
-          const en = new SheetPage(null, device, page, "en", null, 0).planCount();
-          return Math.max(ru, en);
+        /* Раскладка рисунков общая для RU и EN: берём ту, где страниц больше
+           (в EN текст длиннее, и рисунок чаще уезжает на следующую страницу),
+           и подставляем её в оба языка. Иначе короткая раскладка добивалась
+           пустой страницей — так появлялся пустой «Лист технических данных
+           №3.2» перед страницей рисунков. */
+        const layouts = pages.map((page) => {
+          const ru = new SheetPage(null, device, page, "ru", null, 0).plan();
+          const en = new SheetPage(null, device, page, "en", null, 0).plan();
+          return ru.length > en.length ? ru : en;
         });
+        const counts = layouts.map((layout) => layout.length);
         const total = counts.reduce((n, c) => n + c, 0) || 1;
         const counter = () => {
           let index = 0;
@@ -976,10 +988,10 @@ ${doc.images.map(anchor).join("")}
         const ruNum = counter();
         const enNum = counter();
         pages.forEach((page, i) => {
-          new SheetPage(doc, device, page, "ru", ruNum, counts[i], owners[i], isChanged).render();
+          new SheetPage(doc, device, page, "ru", ruNum, counts[i], owners[i], isChanged).render(layouts[i]);
         });
         pages.forEach((page, i) => {
-          new SheetPage(doc, device, page, "en", enNum, counts[i], owners[i], isChanged).render();
+          new SheetPage(doc, device, page, "en", enNum, counts[i], owners[i], isChanged).render(layouts[i]);
         });
         tagsPage(doc, device, isChanged);
       });

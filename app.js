@@ -1759,6 +1759,36 @@
     error.hidden = !message;
   }
 
+  /* Правка глоссария вместе с обновлением английского текста. Сначала
+     запоминаем, как поля этого проекта переводились до правки, затем
+     сохраняем пары и заново переводим те поля, где встречается новый термин
+     и где английский текст не правили руками (он совпадает с автопереводом). */
+  function saveGlossAndRefresh(pairs, term) {
+    const key = glossKey(term);
+    const watch = autoOn && syncOn && key
+      ? (project().devices || [])
+        .flatMap((d) => translateList(d))
+        .filter((job) => glossKey(job.ru).includes(key))
+        .map((job) => ({ job, auto: translateRu(job.ru).text }))
+      : [];
+    saveGloss(pairs);
+    let updated = 0;
+    watch.forEach((item) => {
+      const was = String(item.job.get() || "");
+      if (!was.trim() || was !== item.auto) return;
+      const next = translateRu(item.job.ru).text;
+      if (next === was) return;
+      item.job.set(next);
+      noteChange(item.job.key, was);
+      updated += 1;
+    });
+    if (updated) {
+      touch();
+      render();
+    }
+    return updated;
+  }
+
   function addGlossPair() {
     const ruEl = $("#gloss-ru");
     const enEl = $("#gloss-en");
@@ -1774,14 +1804,14 @@
       if (glossKey(key) === glossKey(ru)) delete store[key];
     });
     store[ru] = en;
-    saveGloss(store);
+    const refreshed = saveGlossAndRefresh(store, ru);
     glossError("");
     ruEl.value = "";
     enEl.value = "";
     missingWords = missingWords.filter((word) => glossKey(word) !== glossKey(ru));
     renderMissing();
     renderGlossList();
-    toast(`Своя пара добавлена: ${ru} → ${en}`);
+    toast(`Своя пара добавлена: ${ru} → ${en}${refreshed ? `, обновлено полей: ${refreshed}` : ""}`);
     ruEl.focus();
   }
 
