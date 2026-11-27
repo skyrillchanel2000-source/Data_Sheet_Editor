@@ -7,6 +7,14 @@
   const ROWS_PER_PAGE = 60;
   const FRAME_ROWS = 58;
   const ROW_H = 15.75;
+  /* Печать: A4 книжная (595,28 × 841,89 pt). Верхнее поле 1 см нужно, чтобы
+     при печати в PDF лист не начинался от самого края; остальные поля нулевые.
+     Масштаб подбирается так, чтобы 60 строк по-прежнему занимали одну
+     страницу: при поле 1 см это 86 % вместо 89 %. */
+  const PAGE_H_PT = 841.89;
+  const MARGIN_TOP_CM = 1;
+  const MARGIN_TOP_IN = MARGIN_TOP_CM / 2.54;
+  const PRINT_SCALE = Math.min(89, Math.floor(((PAGE_H_PT - MARGIN_TOP_CM * 28.3464567) / (ROWS_PER_PAGE * ROW_H)) * 100));
   const PX_PER_ROW = 21;
   const EMU = 9525;
   const AREA_W = 627;
@@ -914,8 +922,8 @@
 <sheetData>${rows.join("")}</sheetData>
 ${merges}
 <printOptions horizontalCentered="0" verticalCentered="0"/>
-<pageMargins left="0" right="0" top="0" bottom="0" header="0" footer="0"/>
-<pageSetup paperSize="9" scale="89" pageOrder="overThenDown" orientation="portrait" horizontalDpi="300" verticalDpi="300"/>
+<pageMargins left="0" right="0" top="${MARGIN_TOP_IN}" bottom="0" header="0" footer="0"/>
+<pageSetup paperSize="9" scale="${PRINT_SCALE}" pageOrder="overThenDown" orientation="portrait" horizontalDpi="300" verticalDpi="300"/>
 ${rowBreaks}
 ${colBreaks}
 ${draw}
